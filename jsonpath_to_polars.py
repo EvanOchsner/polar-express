@@ -457,6 +457,57 @@ def handle_predicate_token(path: str, start_idx: int) -> Token:
     return ("predicate", {"expr": parsed_pred, "fields": fields})
 
 
+def build_nested_schema(tokens: List[Token], start_idx: int) -> Tuple[pl.DataType, int]:
+    """
+    Build a nested schema for complex JSON paths with multiple array wildcards.
+    
+    Args:
+        tokens: The list of tokens.
+        start_idx: The starting index in the token list.
+        
+    Returns:
+        A tuple of (schema, last_index_processed)
+    """
+    i = start_idx
+    field_names: List[str] = []
+    
+    # Collect field names until we hit another wildcard or end of tokens
+    while i < len(tokens) and tokens[i][0] == "field":
+        field_names.append(cast(str, tokens[i][1]))
+        i += 1
+    
+    # Check if we have another wildcard after collecting fields
+    if i < len(tokens) and tokens[i][0] == "wildcard":
+        # We hit another wildcard, which means we have nested arrays
+        # Process tokens after this wildcard recursively
+        inner_schema, last_idx = build_nested_schema(tokens, i + 1)
+        
+        # Wrap the inner schema in a List for the wildcard
+        list_schema = pl.List(inner_schema)
+        
+        # Now wrap in Struct fields working backwards
+        current_schema: pl.DataType = list_schema
+        for field_name in reversed(field_names):
+            current_schema = pl.Struct([pl.Field(field_name, current_schema)])
+            
+        return current_schema, last_idx
+    else:
+        # No more wildcards, build the terminal structure
+        # Default to String for the innermost type
+        innermost_type: pl.DataType = cast(pl.DataType, pl.String)
+        
+        # Build nested structure from inside out
+        terminal_schema: pl.DataType = innermost_type
+        for field_name in reversed(field_names):
+            if terminal_schema == pl.String:
+                # Innermost field
+                terminal_schema = pl.Struct([pl.Field(field_name, pl.String)])
+            else:
+                # Wrap the previous structure
+                terminal_schema = pl.Struct([pl.Field(field_name, terminal_schema)])
+        
+        return terminal_schema, i - 1  # -1 because we want to return to the last field token
+        
 def process_tokens(tokens: List[Token]) -> Expr:
     """
     Process a list of tokens to build a polars expression.
@@ -491,13 +542,47 @@ def process_tokens(tokens: List[Token]) -> Expr:
         if token_type == "field":
             expr = process_field_token(expr, tokens, i, token_value)
         elif token_type == "index":
-            # Array index access
+            # Handle indexed array access
+            # If it's a numbered index followed by more complex path elements, 
+            # use json_path_match for the whole path
+            if i > 0 and i + 1 < len(tokens) and (tokens[i+1][0] == "wildcard" or tokens[i+1][0] == "index"):
+                # We have a complex path with multiple array accesses
+                root_token = tokens[0]
+                if root_token[0] == "field":
+                    root_field = cast(str, root_token[1])
+                    
+                    # Build JSONPath string for everything from the index onwards
+                    json_path = "$"
+                    for j in range(i, len(tokens)):
+                        t = tokens[j]
+                        if t[0] == "index":
+                            json_path += f"[{t[1]}]"
+                        elif t[0] == "wildcard":
+                            json_path += "[*]"
+                        elif t[0] == "field":
+                            json_path += f".{t[1]}"
+                    
+                    return pl.col(root_field).str.json_path_match(json_path)
+                
+            # Simple array index access
             expr = expr.list.get(cast(int, token_value))  # type: ignore
         elif token_type == "wildcard":
-            expr = process_wildcard_token(expr, tokens, i)
-            # If we processed the next token as part of wildcard handling
-            if i + 1 < len(tokens) and tokens[i + 1][0] == "field":
-                i += 1  # Skip the next token as we've incorporated it
+            # We need to handle complex wildcards with nested arrays differently
+            next_wildcard_idx = next((j for j in range(i+1, len(tokens)) if tokens[j][0] == "wildcard"), None)
+            
+            if next_wildcard_idx is not None:
+                # We have multiple wildcards in the path, construct a custom schema
+                schema, last_idx = build_nested_schema(tokens, i + 1)
+                expr = expr.str.json_decode(pl.List(schema))
+                i = last_idx
+            else:
+                # Simple wildcard handling
+                expr = process_wildcard_token(expr, tokens, i)
+                # Skip all field tokens that follow since they're processed in wildcard handling
+                next_i = i + 1
+                while next_i < len(tokens) and tokens[next_i][0] == "field":
+                    next_i += 1
+                i = next_i - 1  # -1 because we increment i at the end of the loop
         elif token_type == "predicate":
             expr = process_predicate_token(expr, tokens, i, token_value)
             # If we processed the next token as part of predicate handling
@@ -552,14 +637,36 @@ def process_wildcard_token(expr: Expr, tokens: List[Token], idx: int) -> Expr:
     Returns:
         The updated polars Expression.
     """
-    # Wildcard array access
-    # Look ahead to see what fields we need to extract from array elements
-    if idx + 1 < len(tokens) and tokens[idx + 1][0] == "field":
-        next_field = cast(str, tokens[idx + 1][1])
-        return expr.str.json_decode(pl.List(pl.Struct([pl.Field(next_field, pl.String)])))
-    else:
-        # Generic array decode
-        return expr.str.json_decode()
+    # Wildcard array access - we need to identify all nested fields after the wildcard
+    if idx + 1 < len(tokens):
+        # Collect all field tokens that follow the wildcard
+        nested_fields: List[str] = []
+        i = idx + 1
+        
+        while i < len(tokens) and tokens[i][0] == "field":
+            nested_fields.append(cast(str, tokens[i][1]))
+            i += 1
+        
+        if nested_fields:
+            # We found fields after the wildcard - construct the nested structure
+            # Start from the innermost field
+            current_type = pl.String
+            
+            # Build the nested structure from inside out
+            field_structs: List[pl.Field] = []
+            for field_name in reversed(nested_fields):
+                if not field_structs:
+                    # Innermost field
+                    field_structs.append(pl.Field(field_name, current_type))
+                else:
+                    # Wrap the previous structure
+                    field_structs.append(pl.Field(field_name, pl.Struct([field_structs[-1]])))
+            
+            # The last item contains our complete structure
+            return expr.str.json_decode(pl.List(pl.Struct([field_structs[-1]])))
+    
+    # Generic array decode if no field tokens follow
+    return expr.str.json_decode()
 
 
 def process_predicate_token(expr: Expr, tokens: List[Token], idx: int, token_value: Any) -> Expr:

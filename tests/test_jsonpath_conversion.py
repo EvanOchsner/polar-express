@@ -63,10 +63,49 @@ class TestJsonPathToPolars:
     def test_wildcard_with_nested_field(self):
         """Test wildcard with nested field."""
         result = jsonpath_to_polars("$.users[*].address.city")
-        # This is more complicated - check expected components
-        assert "users" in str(result)
-        assert "address" in str(result) or "city" in str(result)
+        expected = pl.col("users").str.json_decode(
+            pl.List(pl.Struct([
+                pl.Field("address", pl.Struct([
+                    pl.Field("city", pl.String)
+                ]))
+            ]))
+        )
+        assert result.meta.eq(expected)
 
+    def test_wildcard_with_deeply_nested_field(self):
+        """Test wildcard with deeply nested fields."""
+        result = jsonpath_to_polars("$.users[*].contact.address.city")
+        expected = pl.col("users").str.json_decode(
+            pl.List(pl.Struct([
+                pl.Field("contact", pl.Struct([
+                    pl.Field("address", pl.Struct([
+                        pl.Field("city", pl.String)
+                    ]))
+                ]))
+            ]))
+        )
+        assert result.meta.eq(expected)
+    
+    def test_multiple_arrays_with_wildcards(self):
+        """Test path with multiple array wildcards."""
+        result = jsonpath_to_polars("$.departments[*].employees[*].name")
+        expected = pl.col("departments").str.json_decode(
+            pl.List(pl.Struct([
+                pl.Field("employees", pl.List(pl.Struct([
+                    pl.Field("name", pl.String)
+                ])))
+            ]))
+        )
+        assert result.meta.eq(expected)
+        
+    def test_array_index_with_nested_arrays(self):
+        """Test array index access with nested arrays."""
+        result = jsonpath_to_polars("$.schools[0].classes[*].students[*].grade")
+        expected = pl.col("schools").str.json_path_match(
+            "$[0].classes[*].students[*].grade"
+        )
+        assert result.meta.eq(expected)
+    
     def test_invalid_jsonpath(self):
         """Test invalid JSONPath format."""
         # Missing $ prefix
