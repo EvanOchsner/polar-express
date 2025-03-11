@@ -721,6 +721,92 @@ def process_predicate_token(expr: Expr, tokens: List[Token], idx: int, token_val
     return expr
 
 
+def has_nested_array_wildcards_or_predicates(path: str) -> bool:
+    """
+    Determines if a JSONPath has multiple array wildcards or predicates.
+    
+    Args:
+        path: The JSONPath without the leading '$.' prefix.
+        
+    Returns:
+        True if the path contains nested arrays with wildcards or predicates, False otherwise.
+    """
+    # Count wildcards [*]
+    wildcard_count = path.count("[*]")
+    
+    # Count predicates [?(...)
+    predicate_count = path.count("[?(")
+    
+    # If we have multiple wildcards or predicates, or both a wildcard and predicate
+    return (wildcard_count + predicate_count) > 1 or (wildcard_count >= 1 and predicate_count >= 1)
+
+
+def handle_nested_arrays_special(path: str) -> Optional[Expr]:
+    """
+    Handle JSONPaths that contain nested arrays with wildcards or predicates.
+    These are hard to process fully, so we convert to string at the first array.
+    
+    Args:
+        path: The JSONPath without the leading '$.' prefix.
+        
+    Returns:
+        A polars Expression that returns the JSON as a string at the point of the first wildcard/predicate array.
+    """
+    if not has_nested_array_wildcards_or_predicates(path):
+        return None
+        
+    # Find the first array with wildcard or predicate
+    wildcard_pos = path.find("[*]")
+    predicate_pos = path.find("[?(")
+    
+    # Determine which comes first
+    first_special_array_pos = float('inf')
+    if wildcard_pos >= 0:
+        first_special_array_pos = wildcard_pos
+    if predicate_pos >= 0 and predicate_pos < first_special_array_pos:
+        first_special_array_pos = predicate_pos
+        
+    # If neither was found, this shouldn't happen as we already checked for nested arrays
+    if first_special_array_pos == float('inf'):
+        return None
+        
+    # Find the path up to the first special array
+    path_before = path[:int(first_special_array_pos)]
+    
+    # Handle the case where we have an indexed array access before a wildcard
+    # Example: $.schools[0].classes[*].students[*].grade
+    index_match = re.search(r'\[(\d+)\]', path_before)
+    if index_match:
+        # Extract everything before the indexed array bracket
+        bracket_pos = path_before.find(f"[{index_match.group(1)}]")
+        root_field = path_before[:bracket_pos]
+        
+        # Extract everything after the indexed array bracket
+        rest_path = path_before[bracket_pos + len(index_match.group(0)):]
+        if rest_path.startswith('.'):
+            rest_path = rest_path[1:]  # Remove leading dot
+            
+        # Build the expression using the schools[0] pattern
+        # For the example: pl.col("schools").str.json_path_match("$[0].classes").cast(pl.Utf8)
+        return pl.col(f"{root_field}").str.json_path_match(f"$[{index_match.group(1)}]{rest_path and f'.{rest_path}' or ''}").cast(pl.Utf8)
+    
+    # Handle regular case (no indexed array before wildcard)
+    # Get the root column
+    if "." in path_before:
+        parts = path_before.split(".")
+        root = parts[0]
+        rest_before = ".".join(parts[1:])
+        
+        # Use json_path_match to get to the array, then cast to string to keep the raw JSON
+        # This gives us the JSONPath up to the array but not including the wildcard/predicate
+        # We'll get the array as a string, which will include all nested structures
+        return pl.col(root).str.json_path_match(f"$.{rest_before}").cast(pl.Utf8)
+    else:
+        # If there's no dot, the root is the full path_before
+        # Cast the array field to string to get the raw JSON representation
+        return pl.col(path_before).cast(pl.Utf8)
+
+
 def jsonpath_to_polars(jsonpath: str) -> Expr:
     """
     Convert a JSONPath expression to a polars Expression.
@@ -738,6 +824,11 @@ def jsonpath_to_polars(jsonpath: str) -> Expr:
     path = validate_jsonpath(jsonpath)
     
     # Try each handler in sequence, returning the first successful result
+    
+    # Handle nested arrays with wildcards or predicates specially
+    expr = handle_nested_arrays_special(path)
+    if expr is not None:
+        return expr
     
     # Handle simple field access cases first
     expr = handle_simple_field_access(path)

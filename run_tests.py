@@ -2,7 +2,6 @@
 """
 Test runner script for the JSONPath to Polars converter.
 """
-import os
 import sys
 import argparse
 import subprocess
