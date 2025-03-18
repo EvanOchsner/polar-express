@@ -347,8 +347,20 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
             # If we want to extract a specific field from the filtered items
             jsonpath_expr += f".{return_field}"
 
-        # Use JSONPath in Polars to do the filtering
-        return pl.col(root).str.json_path_match(jsonpath_expr)
+        # Get the expression that would extract the array itself
+        array_expr = pl.col(root).str.json_path_match(f"$.{nested_part}")
+
+        # First check if the array is empty before trying to filter
+        return pl.when(
+            # Check if it's an empty list
+            array_expr.eq("[]")
+        ).then(
+            # Return null for empty lists
+            pl.lit(None)
+        ).otherwise(
+            # Only try to filter when it's not empty
+            pl.col(root).str.json_path_match(jsonpath_expr)
+        )
     else:
         # This is a direct array in the root column
         jsonpath_expr = f"$[?(@.{field}{op}{value})]"
@@ -356,7 +368,17 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
         if return_field:
             jsonpath_expr += f".{return_field}"
 
-        return pl.col(root).str.json_path_match(jsonpath_expr)
+        # First check if the array is empty before trying to filter
+        return pl.when(
+            # Check if it's an empty list
+            pl.col(root).eq("[]")
+        ).then(
+            # Return null for empty lists
+            pl.lit(None)
+        ).otherwise(
+            # Only try to filter when it's not empty
+            pl.col(root).str.json_path_match(jsonpath_expr)
+        )
 
 
 def tokenize_path(path: str) -> List[Token]:
@@ -688,10 +710,28 @@ def process_wildcard_token(expr: Expr, tokens: List[Token], idx: int) -> Expr:
                     )
 
             # The last item contains our complete structure
-            return expr.str.json_decode(pl.List(pl.Struct([field_structs[-1]])))
+            # First check if the array is empty before trying to decode
+            return pl.when(
+                # Check if it's an empty list
+                expr.eq("[]")
+            ).then(
+                # Return null for empty lists
+                pl.lit(None)
+            ).otherwise(
+                # Only try to decode when it's not empty
+                expr.str.json_decode(pl.List(pl.Struct([field_structs[-1]])))
+            )
 
     # Generic array decode if no field tokens follow
-    return expr.str.json_decode()
+    # Check if it's an empty list first
+    return pl.when(
+        expr.eq("[]")
+    ).then(
+        pl.lit(None)
+    ).otherwise(
+        # Only try to decode when it's not empty
+        expr.str.json_decode()
+    )
 
 
 def process_predicate_token(
@@ -746,6 +786,115 @@ def process_predicate_token(
             return predicate_to_expr(pred_expr, expr)
 
     return expr
+
+
+def handle_array_wildcard_access(path: str) -> Optional[Expr]:
+    """
+    Handle array wildcard access patterns like $.foo.bar[*].baz,
+    gracefully handling empty lists.
+    
+    Args:
+        path: The JSONPath without the leading '$.' prefix.
+        
+    Returns:
+        A polars Expression that safely extracts data from arrays.
+    """
+    if "[*]" not in path:
+        return None
+        
+    # Split the path at the wildcard
+    parts = path.split("[*]")
+    field_path = parts[0]  # e.g., "foo.bar"
+    rest_path = parts[1] if len(parts) > 1 else ""  # e.g., ".baz"
+    
+    # Split field path into components
+    field_parts = field_path.split(".")
+    root = field_parts[0]  # The root column name
+    
+    if len(field_parts) > 1:
+        # Nested field before wildcard, e.g., "foo.bar"
+        nested_path = ".".join(field_parts[1:])
+        
+        # First, extract the array itself
+        array_expr = pl.col(root).str.json_path_match(f"$.{nested_path}")
+        
+        # Then check if it's an empty array before trying to decode
+        if rest_path:
+            # If there's a nested field after the wildcard
+            rest_path = rest_path.lstrip(".")  # Remove leading dot if present
+            
+            # Parse nested fields for proper schema construction
+            nested_parts = rest_path.split(".")
+            
+            # Build nested schema from inside out
+            current_type = pl.String
+            current_schema = current_type
+            
+            for field in reversed(nested_parts):
+                current_schema = pl.Struct([pl.Field(field, current_schema)])
+            
+            return pl.when(
+                # Check if it's an empty list
+                array_expr.eq("[]")
+            ).then(
+                # Return null for empty lists
+                pl.lit(None)
+            ).otherwise(
+                # Only try to decode when it's not empty
+                array_expr.str.json_decode(pl.List(current_schema))
+            )
+        else:
+            # Just the array itself
+            return pl.when(
+                # Check if it's an empty list
+                array_expr.eq("[]")
+            ).then(
+                # Return null for empty lists
+                pl.lit(None)
+            ).otherwise(
+                # Only try to decode when it's not empty
+                # Let Polars infer the schema from the JSON data
+                array_expr.str.json_decode(infer_schema_length=None)
+            )
+    else:
+        # Direct array access on root column, e.g., "items[*].price"
+        if rest_path:
+            # With nested field after wildcard
+            rest_path = rest_path.lstrip(".")  # Remove leading dot if present
+            
+            # Parse nested fields for proper schema construction
+            nested_parts = rest_path.split(".")
+            
+            # Build nested schema from inside out
+            current_type = pl.String
+            current_schema = current_type
+            
+            for field in reversed(nested_parts):
+                current_schema = pl.Struct([pl.Field(field, current_schema)])
+            
+            return pl.when(
+                # Check if it's an empty list
+                pl.col(root).eq("[]")
+            ).then(
+                # Return null for empty lists
+                pl.lit(None)
+            ).otherwise(
+                # Only try to decode when it's not empty
+                pl.col(root).str.json_decode(pl.List(current_schema))
+            )
+        else:
+            # Just the array itself
+            return pl.when(
+                # Check if it's an empty list
+                pl.col(root).eq("[]")
+            ).then(
+                # Return null for empty lists
+                pl.lit(None)
+            ).otherwise(
+                # Only try to decode when it's not empty
+                # Let Polars infer the schema from the JSON data
+                pl.col(root).str.json_decode(infer_schema_length=None)
+            )
 
 
 def has_nested_array_wildcards_or_predicates(path: str) -> bool:
@@ -888,6 +1037,11 @@ def jsonpath_to_polars(jsonpath: str) -> Expr:
 
     # Handle multiple array indices like $.matrix[0][1]
     expr = handle_multiple_array_indices(path)
+    if expr is not None:
+        return expr
+
+    # Handle array wildcard patterns like $.foo.bar[*].baz with empty list handling
+    expr = handle_array_wildcard_access(path)
     if expr is not None:
         return expr
 

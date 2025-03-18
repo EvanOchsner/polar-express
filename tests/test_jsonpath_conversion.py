@@ -27,8 +27,15 @@ class TestJsonPathToPolars:
     def test_array_wildcard_access(self):
         """Test array wildcard access."""
         result = jsonpath_to_polars("$.relationships[*].dest")
-        expected = pl.col("relationships").str.json_decode(
-            pl.List(pl.Struct([pl.Field("dest", pl.String)]))
+        # Create the updated expected expression with empty list handling
+        expected = pl.when(
+            pl.col("relationships").eq("[]")
+        ).then(
+            pl.lit(None)
+        ).otherwise(
+            pl.col("relationships").str.json_decode(
+                pl.List(pl.Struct([pl.Field("dest", pl.String)]))
+            )
         )
         assert result.meta.eq(expected)
 
@@ -48,8 +55,17 @@ class TestJsonPathToPolars:
         """Test array with predicate filter."""
         result = jsonpath_to_polars("$.items[?(@.price>10)].name")
 
-        # Create the expected expression manually using the JSONPath approach
-        expected = pl.col("items").str.json_path_match("$[?(@.price>10)].name")
+        # Create the expected expression with empty list handling
+        expected = pl.when(
+            # Check if it's an empty list
+            pl.col("items").eq("[]")
+        ).then(
+            # Return null for empty lists
+            pl.lit(None)
+        ).otherwise(
+            # Only try to filter when it's not empty
+            pl.col("items").str.json_path_match("$[?(@.price>10)].name")
+        )
 
         # Use meta.eq for comparison
         assert result.meta.eq(expected)
@@ -63,10 +79,16 @@ class TestJsonPathToPolars:
     def test_wildcard_with_nested_field(self):
         """Test wildcard with nested field."""
         result = jsonpath_to_polars("$.users[*].address.city")
-        expected = pl.col("users").str.json_decode(
-            pl.List(
-                pl.Struct(
-                    [pl.Field("address", pl.Struct([pl.Field("city", pl.String)]))]
+        expected = pl.when(
+            pl.col("users").eq("[]")
+        ).then(
+            pl.lit(None)
+        ).otherwise(
+            pl.col("users").str.json_decode(
+                pl.List(
+                    pl.Struct(
+                        [pl.Field("address", pl.Struct([pl.Field("city", pl.String)]))]
+                    )
                 )
             )
         )
@@ -75,22 +97,28 @@ class TestJsonPathToPolars:
     def test_wildcard_with_deeply_nested_field(self):
         """Test wildcard with deeply nested fields."""
         result = jsonpath_to_polars("$.users[*].contact.address.city")
-        expected = pl.col("users").str.json_decode(
-            pl.List(
-                pl.Struct(
-                    [
-                        pl.Field(
-                            "contact",
-                            pl.Struct(
-                                [
-                                    pl.Field(
-                                        "address",
-                                        pl.Struct([pl.Field("city", pl.String)]),
-                                    )
-                                ]
-                            ),
-                        )
-                    ]
+        expected = pl.when(
+            pl.col("users").eq("[]")
+        ).then(
+            pl.lit(None)
+        ).otherwise(
+            pl.col("users").str.json_decode(
+                pl.List(
+                    pl.Struct(
+                        [
+                            pl.Field(
+                                "contact",
+                                pl.Struct(
+                                    [
+                                        pl.Field(
+                                            "address",
+                                            pl.Struct([pl.Field("city", pl.String)]),
+                                        )
+                                    ]
+                                ),
+                            )
+                        ]
+                    )
                 )
             )
         )
