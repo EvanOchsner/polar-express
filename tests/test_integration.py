@@ -187,6 +187,43 @@ class TestJsonPathIntegration:
         # This test's assertion may need adjustments based on how predicate filtering is implemented
         assert "Laptop" in str(result.select("expensive_items"))
         assert "Monitor" in str(result.select("expensive_items"))
+        
+    def test_array_filter_with_compound_predicate(self, sample_df):
+        """Test filtering arrays with compound predicates using AND operators."""
+        # Create a sample dataframe with items having multiple attributes
+        products_json = [
+            json.dumps({
+                "list_col": [
+                    {"id": 1, "foo": "X", "bar": "Y", "price": 100},
+                    {"id": 2, "foo": "X", "bar": "Z", "price": 200},
+                    {"id": 3, "foo": "Y", "bar": "Y", "price": 300},
+                    {"id": 4, "foo": "Z", "bar": "Z", "price": 400}
+                ]
+            }),
+            json.dumps({
+                "list_col": [
+                    {"id": 5, "foo": "X", "bar": "Y", "price": 150},
+                    {"id": 6, "foo": "Y", "bar": "Z", "price": 250},
+                    {"id": 7, "foo": "Z", "bar": "Y", "price": 350}
+                ]
+            }),
+            json.dumps({
+                "list_col": []  # Empty array for testing
+            })
+        ]
+        
+        df = pl.DataFrame({"products": products_json})
+        
+        # Test with AND condition - items where foo=X AND bar=Y
+        expr_and = jsonpath_to_polars('$.products.list_col[?(@.foo == "X" && @.bar == "Y")].id')
+        print(str(expr_and))
+        result_and = df.with_columns([expr_and.alias("and_results")])
+        
+        # Check that only IDs 1 and 5 are in the result (items with foo=X AND bar=Y)
+        and_results = result_and.select("and_results").to_series().to_list()
+        assert "1" in str(and_results[0])
+        assert "5" in str(and_results[1])
+        assert and_results[2] is None  # Empty array should return None
 
     def test_from_parquet_file(self, parquet_file):
         """Test loading and processing data from a Parquet file."""

@@ -31,6 +31,12 @@ def parse_predicate(predicate_str: str) -> Tuple[str, Set[str]]:
 
     # Convert comparison operators if needed
     transformed = transformed.replace("==", "=")
+    
+    # Add spaces around operators for better compatibility with polars
+    transformed = re.sub(r'([=<>!]+)', r' \1 ', transformed)
+    
+    # Normalize spaces
+    transformed = re.sub(r'\s+', ' ', transformed).strip()
 
     return transformed, fields
 
@@ -267,42 +273,60 @@ def handle_direct_array_access(root: str, index: str, rest: str) -> Expr:
         return pl.col(root).str.json_path_match(f"$[{index}]")
 
 
-def parse_predicate_expression(predicate_str: str) -> Tuple[str, str, Any]:
+def parse_predicate_expression(predicate_str: str) -> List[Tuple[str, str, Any]]:
     """
-    Parse a predicate expression into field, operator, and value components.
+    Parse a predicate expression into components.
+    
+    Supports all comparison operators (==, !=, >, <, >=, <=) with both string 
+    and numeric values, but only allows && (AND) operators between conditions.
 
     Args:
         predicate_str: The predicate string to parse.
 
     Returns:
-        A tuple of (field, operator, value).
+        A list of tuples containing (field, operator, value).
 
     Raises:
-        ValueError: If the predicate cannot be parsed.
+        ValueError: If the predicate cannot be parsed or contains unsupported operators like OR.
     """
-    pred_match = re.match(
-        r"@\.([a-zA-Z0-9_]+)\s*(==|!=|>|<|>=|<=)\s*([^)&|]+)", predicate_str
-    )
-
-    if not pred_match:
-        raise ValueError(f"Cannot parse predicate: {predicate_str}")
-
-    field, op, value = pred_match.groups()
-
-    # Clean up the value (remove quotes if needed)
-    if value.startswith('"') and value.endswith('"'):
-        value = value[1:-1]
-    elif value.isdigit():
-        value = int(value)
-    elif re.match(r"^-?\d+(\.\d+)?$", value):
-        value = float(value)
-
-    return field, op, value
+    # Check if there's an OR operator, which we don't support
+    if "||" in predicate_str:
+        raise ValueError("OR operators (||) are not supported in predicates.")
+        
+    # Split the predicate by && operator
+    parts = predicate_str.split("&&")
+    result = []
+    
+    # Parse each individual condition
+    for condition in parts:
+        condition = condition.strip()
+        
+        # Match pattern for any comparison with a string value: @.field op "value"
+        string_match = re.match(r"@\.([a-zA-Z0-9_]+)\s*(==|!=|>|<|>=|<=)\s*\"([^\"]+)\"", condition)
+        if string_match:
+            field, op, value = string_match.groups()
+            result.append((field, op, value.strip()))
+            continue
+            
+        # Match pattern for any comparison with a numeric value: @.field op 100
+        numeric_match = re.match(r"@\.([a-zA-Z0-9_]+)\s*(==|!=|>|<|>=|<=)\s*(\d+(?:\.\d+)?)", condition)
+        if numeric_match:
+            field, op, value = numeric_match.groups()
+            # Convert the value to numeric type
+            value = float(value) if "." in value else int(value)
+            result.append((field, op, value))
+            continue
+            
+        # If we get here, the pattern is not supported
+        raise ValueError(f"Unsupported predicate condition: {condition}")
+    
+    return result
 
 
 def handle_array_with_predicate(path: str) -> Optional[Expr]:
     """
-    Handle array with predicate like $.items[?(@.price>100)].name.
+    Handle array with predicate like $.items[?(@.field1 == "x1" && @.field2 == "x2")].name.
+    Supports all comparison operators (==, !=, >, <, >=, <=) joined by AND operators.
 
     Args:
         path: The JSONPath without the leading '$.' prefix.
@@ -327,8 +351,30 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
     if predicate_end + 2 < len(rest) and rest[predicate_end + 2] == ".":
         return_field = rest[predicate_end + 3 :]
 
-    # Parse the predicate components
-    field, op, value = parse_predicate_expression(predicate_str)
+    try:
+        # Parse the predicate components - now returns a list of conditions
+        predicate_conditions = parse_predicate_expression(predicate_str)
+    except ValueError:
+        # If parsing fails, return None to let other handlers try
+        return None
+
+    # Build a JSONPath expression with all the conditions joined by AND
+    jsonpath_predicate_parts = []
+    
+    for field, op, value in predicate_conditions:
+        # Format the value based on its type
+        if isinstance(value, str):
+            # For string values, use double quotes in JSONPath
+            formatted_value = f'"{value}"'
+        else:
+            # For numeric values, no quotes
+            formatted_value = str(value)
+        
+        # Add the formatted condition
+        jsonpath_predicate_parts.append(f"@.{field}{op}{formatted_value}")
+    
+    # Join all conditions with AND
+    jsonpath_predicate = " && ".join(jsonpath_predicate_parts)
 
     # Build the JSONPath expression to extract filtered data
     # First split the array field path to get the root column
@@ -339,9 +385,8 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
         # We have a nested path like 'inventory.items'
         nested_part = ".".join(parts[1:])
 
-        # For items with a predicate, construct a JSONPath expression
-        # that directly filters using JSONPath syntax
-        jsonpath_expr = f"$.{nested_part}[?(@.{field}{op}{value})]"
+        # Construct a JSONPath expression that directly filters using JSONPath syntax
+        jsonpath_expr = f"$.{nested_part}[?({jsonpath_predicate})]"
 
         if return_field:
             # If we want to extract a specific field from the filtered items
@@ -350,33 +395,27 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
         # Get the expression that would extract the array itself
         array_expr = pl.col(root).str.json_path_match(f"$.{nested_part}")
 
-        # First check if the array is empty before trying to filter
+        # Check if the array is empty before trying to filter
         return pl.when(
-            # Check if it's an empty list
             array_expr.eq("[]")
         ).then(
-            # Return null for empty lists
             pl.lit(None)
         ).otherwise(
-            # Only try to filter when it's not empty
             pl.col(root).str.json_path_match(jsonpath_expr)
         )
     else:
         # This is a direct array in the root column
-        jsonpath_expr = f"$[?(@.{field}{op}{value})]"
+        jsonpath_expr = f"$[?({jsonpath_predicate})]"
 
         if return_field:
             jsonpath_expr += f".{return_field}"
 
-        # First check if the array is empty before trying to filter
+        # Check if the array is empty before trying to filter
         return pl.when(
-            # Check if it's an empty list
             pl.col(root).eq("[]")
         ).then(
-            # Return null for empty lists
             pl.lit(None)
         ).otherwise(
-            # Only try to filter when it's not empty
             pl.col(root).str.json_path_match(jsonpath_expr)
         )
 
@@ -827,8 +866,7 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
             nested_parts = rest_path.split(".")
             
             # Build nested schema from inside out
-            current_type = pl.String
-            current_schema = current_type
+            current_schema: pl.DataType = pl.String()
             
             for field in reversed(nested_parts):
                 current_schema = pl.Struct([pl.Field(field, current_schema)])
@@ -866,11 +904,10 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
             nested_parts = rest_path.split(".")
             
             # Build nested schema from inside out
-            current_type = pl.String
-            current_schema = current_type
+            curr_schema: pl.DataType = pl.String()
             
             for field in reversed(nested_parts):
-                current_schema = pl.Struct([pl.Field(field, current_schema)])
+                curr_schema = pl.Struct([pl.Field(field, curr_schema)])
             
             return pl.when(
                 # Check if it's an empty list
@@ -880,7 +917,7 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
                 pl.lit(None)
             ).otherwise(
                 # Only try to decode when it's not empty
-                pl.col(root).str.json_decode(pl.List(current_schema))
+                pl.col(root).str.json_decode(pl.List(curr_schema))
             )
         else:
             # Just the array itself
