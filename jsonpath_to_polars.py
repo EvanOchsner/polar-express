@@ -29,28 +29,19 @@ def parse_predicate(predicate_str: str) -> Tuple[str, Set[str]]:
     # Extract all field references
     fields = set(re.findall(r"@\.([a-zA-Z0-9_]+)", predicate_str))
 
-    # Convert comparison operators if needed
-    transformed = transformed.replace("==", "=")
-    
-    # Add spaces around operators for better compatibility with polars
-    transformed = re.sub(r'([=<>!]+)', r' \1 ', transformed)
-    
-    # Normalize spaces
-    transformed = re.sub(r'\s+', ' ', transformed).strip()
-
     return transformed, fields
 
 
-def predicate_to_expr(predicate_str: str, return_expr: Expr) -> Expr:
+def simple_predicate_to_expr(predicate_str: str, return_expr: Expr) -> Expr:
     """
-    Convert a JSONPath predicate to a polars when/then/otherwise expression.
+    Convert a JSONPath expression involving a single field comparison to a polars when/then/otherwise expression.
 
     Args:
-        predicate_str: The parsed predicate string.
+        predicate_str: The simple predicate JSONpath string; e.g. "@.foo == "bar" or "@.count > 1"
         return_expr: The expression to return when the predicate is true.
 
     Returns:
-        A polars expression that evaluates the predicate.
+        A polars expression that evaluates the simple predicate.
     """
     # Split the predicate to get the left side, operator, and right side
     match = re.match(r"([a-zA-Z0-9_]+)\s*([=<>!]+)\s*(.+)", predicate_str)
@@ -64,18 +55,18 @@ def predicate_to_expr(predicate_str: str, return_expr: Expr) -> Expr:
         value = value[1:-1]  # Remove quotes
 
     # Create the condition based on the operator
-    if op == "=":
-        condition = pl.col(field) == value
+    if op == "==":
+        condition = pl.col(field).eq(value)
     elif op == "!=":
-        condition = pl.col(field) != value
+        condition = pl.col(field).ne(value)
     elif op == ">":
-        condition = pl.col(field) > float(value)
+        condition = pl.col(field).gt(float(value))
     elif op == "<":
-        condition = pl.col(field) < float(value)
+        condition = pl.col(field).lt(float(value))
     elif op == ">=":
-        condition = pl.col(field) >= float(value)
+        condition = pl.col(field).ge(float(value))
     elif op == "<=":
-        condition = pl.col(field) <= float(value)
+        condition = pl.col(field).le(float(value))
     else:
         raise ValueError(f"Unsupported operator: {op}")
 
@@ -397,7 +388,7 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
 
         # Check if the array is empty before trying to filter
         return pl.when(
-            array_expr.eq("[]")
+            array_expr.eq("[]").or_(array_expr.is_null())
         ).then(
             pl.lit(None)
         ).otherwise(
@@ -412,7 +403,7 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
 
         # Check if the array is empty before trying to filter
         return pl.when(
-            pl.col(root).eq("[]")
+            pl.col(root).eq("[]").or_(pl.col(root).is_null())
         ).then(
             pl.lit(None)
         ).otherwise(
@@ -752,7 +743,7 @@ def process_wildcard_token(expr: Expr, tokens: List[Token], idx: int) -> Expr:
             # First check if the array is empty before trying to decode
             return pl.when(
                 # Check if it's an empty list
-                expr.eq("[]")
+                expr.eq("[]").or_(expr.is_null())
             ).then(
                 # Return null for empty lists
                 pl.lit(None)
@@ -764,7 +755,7 @@ def process_wildcard_token(expr: Expr, tokens: List[Token], idx: int) -> Expr:
     # Generic array decode if no field tokens follow
     # Check if it's an empty list first
     return pl.when(
-        expr.eq("[]")
+        expr.eq("[]").or_(expr.is_null())
     ).then(
         pl.lit(None)
     ).otherwise(
@@ -815,14 +806,14 @@ def process_predicate_token(
         if idx + 1 < len(tokens) and tokens[idx + 1][0] == "field":
             next_field = cast(str, tokens[idx + 1][1])
             return_expr = pl.col(next_field)
-            expr = predicate_to_expr(pred_expr, return_expr)
+            expr = simple_predicate_to_expr(pred_expr, return_expr)
             # Ensure we preserve the parent context in the expression
             if parent_field:
                 expr = expr.alias(f"{parent_field}_filtered")
             return expr
         else:
             # Return the whole matching objects
-            return predicate_to_expr(pred_expr, expr)
+            return simple_predicate_to_expr(pred_expr, expr)
 
     return expr
 
@@ -873,7 +864,7 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
             
             return pl.when(
                 # Check if it's an empty list
-                array_expr.eq("[]")
+                array_expr.eq("[]").or_(array_expr.is_null())
             ).then(
                 # Return null for empty lists
                 pl.lit(None)
@@ -885,7 +876,7 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
             # Just the array itself
             return pl.when(
                 # Check if it's an empty list
-                array_expr.eq("[]")
+                array_expr.eq("[]").or_(array_expr.is_null())
             ).then(
                 # Return null for empty lists
                 pl.lit(None)
@@ -911,7 +902,7 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
             
             return pl.when(
                 # Check if it's an empty list
-                pl.col(root).eq("[]")
+                pl.col(root).eq("[]").or_(pl.col(root).is_null())
             ).then(
                 # Return null for empty lists
                 pl.lit(None)
@@ -923,7 +914,7 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
             # Just the array itself
             return pl.when(
                 # Check if it's an empty list
-                pl.col(root).eq("[]")
+                pl.col(root).eq("[]").or_(pl.col(root).is_null())
             ).then(
                 # Return null for empty lists
                 pl.lit(None)

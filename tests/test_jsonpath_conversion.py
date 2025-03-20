@@ -58,13 +58,19 @@ class TestJsonPathToPolars:
         # Create the expected expression with empty list handling
         expected = pl.when(
             # Check if it's an empty list
-            pl.col("items").eq("[]")
+            pl.col("items").eq("[]").or_(pl.col("items").is_null())
         ).then(
             # Return null for empty lists
             pl.lit(None)
         ).otherwise(
             # Only try to filter when it's not empty
-            pl.col("items").str.json_path_match("$[?(@.price>10)].name")
+            pl.col("items").str.json_decode(
+                pl.List(
+                    pl.Struct([
+                        pl.Field("price", pl.Float), pl.Field("name", pl.String)
+                    ])
+                )
+            ).filter(pl.col("price") > 10).select(pl.col("name"))
         )
 
         # Use meta.eq for comparison
