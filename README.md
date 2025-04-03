@@ -23,18 +23,15 @@ cd polar-express
 
 ```python
 import polars as pl
+
 from jsonpath_to_polars import jsonpath_to_polars
 
 # Create a DataFrame with JSON data in string columns
-df = pl.DataFrame({
-    "user_data": ['{"name": "Alice", "address": {"city": "New York"}}']
-})
+df = pl.DataFrame({"user_data": ['{"name": "Alice", "address": {"city": "New York"}}']})
 
 # Extract data using JSONPath
 expr = jsonpath_to_polars("$.user_data.address.city")
-result = df.with_columns([
-    expr.alias("city")
-])
+result = df.with_columns([expr.alias("city")])
 
 print(result)
 ```

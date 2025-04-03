@@ -2,9 +2,9 @@
 """
 Test runner script for the JSONPath to Polars converter.
 """
-import sys
 import argparse
 import subprocess
+import sys
 
 
 def main():

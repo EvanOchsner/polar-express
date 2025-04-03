@@ -1,13 +1,11 @@
-import sys
-import os
-import tempfile
 import json
+import os
+import sys
+import tempfile
 
-# Add parent directory to sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import pytest
 import polars as pl
+import pytest
+
 from jsonpath_to_polars import jsonpath_to_polars
 
 
@@ -72,24 +70,28 @@ def create_test_dataframe() -> pl.DataFrame:
             "store": "Computer Shop",
         },
     ]
-    
+
     # Add a record with empty arrays to test empty list handling
     users_with_empty = users.copy()
-    users_with_empty.append({
-        "id": 4,
-        "name": "Dave",
-        "age": 38,
-        "address": {"city": "Seattle", "zip": "98101"},
-        "tags": [],  # Empty array
-        "accounts": [],  # Empty array
-    })
-    
+    users_with_empty.append(
+        {
+            "id": 4,
+            "name": "Dave",
+            "age": 38,
+            "address": {"city": "Seattle", "zip": "98101"},
+            "tags": [],  # Empty array
+            "accounts": [],  # Empty array
+        }
+    )
+
     # Also need to add a matching item for the inventory column
     items_with_empty = items.copy()
-    items_with_empty.append({
-        "items": [],  # Empty array for items
-        "store": "Online Store",
-    })
+    items_with_empty.append(
+        {
+            "items": [],  # Empty array for items
+            "store": "Online Store",
+        }
+    )
 
     # Convert to JSON strings
     users_json = [json.dumps(user) for user in users_with_empty]
@@ -187,38 +189,42 @@ class TestJsonPathIntegration:
         # This test's assertion may need adjustments based on how predicate filtering is implemented
         assert "Laptop" in str(result.select("expensive_items"))
         assert "Monitor" in str(result.select("expensive_items"))
-        
+
     def ignore_test_array_filter_with_compound_predicate(self, sample_df):
         """Test filtering arrays with compound predicates using AND operators."""
         # Create a sample dataframe with items having multiple attributes
         products_json = [
-            json.dumps({
-                "list_col": [
-                    {"id": 1, "foo": "X", "bar": "Y", "price": 100},
-                    {"id": 2, "foo": "X", "bar": "Z", "price": 200},
-                    {"id": 3, "foo": "Y", "bar": "Y", "price": 300},
-                    {"id": 4, "foo": "Z", "bar": "Z", "price": 400}
-                ]
-            }),
-            json.dumps({
-                "list_col": [
-                    {"id": 5, "foo": "X", "bar": "Y", "price": 150},
-                    {"id": 6, "foo": "Y", "bar": "Z", "price": 250},
-                    {"id": 7, "foo": "Z", "bar": "Y", "price": 350}
-                ]
-            }),
-            json.dumps({
-                "list_col": []  # Empty array for testing
-            })
+            json.dumps(
+                {
+                    "list_col": [
+                        {"id": 1, "foo": "X", "bar": "Y", "price": 100},
+                        {"id": 2, "foo": "X", "bar": "Z", "price": 200},
+                        {"id": 3, "foo": "Y", "bar": "Y", "price": 300},
+                        {"id": 4, "foo": "Z", "bar": "Z", "price": 400},
+                    ]
+                }
+            ),
+            json.dumps(
+                {
+                    "list_col": [
+                        {"id": 5, "foo": "X", "bar": "Y", "price": 150},
+                        {"id": 6, "foo": "Y", "bar": "Z", "price": 250},
+                        {"id": 7, "foo": "Z", "bar": "Y", "price": 350},
+                    ]
+                }
+            ),
+            json.dumps({"list_col": []}),  # Empty array for testing
         ]
-        
+
         df = pl.DataFrame({"products": products_json})
-        
+
         # Test with AND condition - items where foo=X AND bar=Y
-        expr_and = jsonpath_to_polars('$.products.list_col[?(@.foo == "X" && @.bar == "Y")].id')
+        expr_and = jsonpath_to_polars(
+            '$.products.list_col[?(@.foo == "X" && @.bar == "Y")].id'
+        )
         print(str(expr_and))
         result_and = df.with_columns([expr_and.alias("and_results")])
-        
+
         # Check that only IDs 1 and 5 are in the result (items with foo=X AND bar=Y)
         and_results = result_and.select("and_results").to_series().to_list()
         assert "1" in str(and_results[0])
@@ -235,7 +241,12 @@ class TestJsonPathIntegration:
         result = df.with_columns([expr.alias("age")])
 
         # Check the extracted data - values are returned as strings from JSON
-        assert result.select("age").to_series().to_list() == ["28", "35", "42", "38"]  # Including the 4th user
+        assert result.select("age").to_series().to_list() == [
+            "28",
+            "35",
+            "42",
+            "38",
+        ]  # Including the 4th user
 
     def test_multiple_extractions(self, sample_df):
         """Test extracting multiple fields in one go."""
@@ -268,7 +279,7 @@ class TestJsonPathIntegration:
         # Extract tags and then access them in the test
         expr = jsonpath_to_polars("$.user_data.tags")
         result = sample_df.with_columns([expr.alias("tags_json")])
-        
+
         # Check that we get the expected tag values
         tags_json = result.select("tags_json").to_series().to_list()
         assert len(tags_json) == 4  # Now 4 rows including the one with empty array
@@ -276,29 +287,29 @@ class TestJsonPathIntegration:
         assert "manager" in tags_json[1] and "java" in tags_json[1]
         assert "developer" in tags_json[2] and "javascript" in tags_json[2]
         assert tags_json[3] == "[]"  # Empty array is represented as a string "[]"
-        
+
     def test_wildcard_with_empty_arrays(self, sample_df):
         """Test array wildcard access with empty arrays."""
         # Rather than test the wildcard directly, which might have issues with the schema,
-        # we'll verify our implementation from a different angle by 
+        # we'll verify our implementation from a different angle by
         # checking if the array is empty first
-        
+
         # Extract the tags arrays as JSON strings
         expr_tags = jsonpath_to_polars("$.user_data.tags")
         result_tags = sample_df.with_columns([expr_tags.alias("tags_json")])
-        
+
         # Verify the 4th row has an empty array
         tags_json = result_tags.select("tags_json").to_series().to_list()
         assert tags_json[3] == "[]"
-        
+
         # Extract the items arrays as JSON strings
-        expr_items = jsonpath_to_polars("$.inventory.items") 
+        expr_items = jsonpath_to_polars("$.inventory.items")
         result_items = sample_df.with_columns([expr_items.alias("items_json")])
-        
+
         # Verify the 4th row has an empty array
         items_json = result_items.select("items_json").to_series().to_list()
         assert items_json[3] == "[]"
-        
+
         # This confirms our implementation correctly identifies empty arrays
 
     def test_array_negative_index(self, sample_df):
@@ -310,7 +321,7 @@ class TestJsonPathIntegration:
         # Check the extracted data - include None for the empty array row
         last_tags = result.select("last_tag").to_series().to_list()
         assert last_tags[0] == "python"
-        assert last_tags[1] == "java"  
+        assert last_tags[1] == "java"
         assert last_tags[2] == "javascript"
         assert last_tags[3] is None  # Empty array doesn't have a last element
 
