@@ -1,7 +1,8 @@
-from typing import Union, List, Tuple, Optional, Dict, Set, Any, cast
+import re
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
+
 import polars as pl
 from polars import Expr
-import re
 
 # Type for tokens produced during parsing
 Token = Tuple[str, Optional[Union[str, int, Dict[str, Any]]]]
@@ -32,46 +33,78 @@ def parse_predicate(predicate_str: str) -> Tuple[str, Set[str]]:
     return transformed, fields
 
 
-def simple_predicate_to_expr(predicate_str: str, return_expr: Expr) -> Expr:
+def comparison_to_expr(field: str, op: str, value: Any) -> Expr:
     """
-    Convert a JSONPath expression involving a single field comparison to a polars when/then/otherwise expression.
+    Convert a single comparison operation to a polars expression.
 
     Args:
-        predicate_str: The simple predicate JSONpath string; e.g. "@.foo == "bar" or "@.count > 1"
-        return_expr: The expression to return when the predicate is true.
+        field: The field to compare
+        op: The comparison operator (==, !=, >, <, >=, <=)
+        value: The value to compare against
 
     Returns:
-        A polars expression that evaluates the simple predicate.
+        A polars expression representing the comparison
     """
-    # Split the predicate to get the left side, operator, and right side
-    match = re.match(r"([a-zA-Z0-9_]+)\s*([=<>!]+)\s*(.+)", predicate_str)
-    if not match:
-        raise ValueError(f"Cannot parse predicate: {predicate_str}")
-
-    field, op, value = match.groups()
-
-    # Convert string value to proper format
-    if value.startswith('"') and value.endswith('"'):
-        value = value[1:-1]  # Remove quotes
-
     # Create the condition based on the operator
     if op == "==":
-        condition = pl.col(field).eq(value)
+        return pl.col(field).eq(value)
     elif op == "!=":
-        condition = pl.col(field).ne(value)
+        return pl.col(field).ne(value)
     elif op == ">":
-        condition = pl.col(field).gt(float(value))
+        return pl.col(field).gt(float(value))
     elif op == "<":
-        condition = pl.col(field).lt(float(value))
+        return pl.col(field).lt(float(value))
     elif op == ">=":
-        condition = pl.col(field).ge(float(value))
+        return pl.col(field).ge(float(value))
     elif op == "<=":
-        condition = pl.col(field).le(float(value))
+        return pl.col(field).le(float(value))
     else:
         raise ValueError(f"Unsupported operator: {op}")
 
+
+def simple_predicate_to_expr(predicate_str: str, return_expr: Expr) -> Expr:
+    """
+    Convert a JSONPath predicate expression to a polars expression.
+    Supports complex expressions with AND (&&) and OR (||) operators.
+
+    Args:
+        predicate_str: The predicate JSONpath string; e.g. "@.foo == "bar" or "@.count > 1 && @.status == "active""
+        return_expr: The expression to return when the predicate is true.
+
+    Returns:
+        A polars expression that evaluates the predicate.
+    """
+    # Parse the predicate into its components
+    try:
+        conditions = parse_predicate_expression(predicate_str)
+    except ValueError as e:
+        raise ValueError(f"Cannot parse predicate: {predicate_str} - {str(e)}")
+
+    # Build the condition expression by combining the individual conditions
+    if not conditions:
+        raise ValueError(f"No valid conditions found in predicate: {predicate_str}")
+
+    # Start with the first condition
+    field, op, value, join_op = conditions[0]
+    condition_expr = comparison_to_expr(field, op, value)
+
+    # Add each subsequent condition, respecting the join operator
+    for i in range(1, len(conditions)):
+        field, op, value, join_op_next = conditions[i]
+        next_expr = comparison_to_expr(field, op, value)
+
+        # Use the join operator from the previous condition to connect this one
+        prev_join_op = conditions[i - 1][3]
+        if prev_join_op == "&&":
+            condition_expr = condition_expr.and_(next_expr)
+        elif prev_join_op == "||":
+            condition_expr = condition_expr.or_(next_expr)
+        else:
+            # This shouldn't happen with valid input
+            raise ValueError(f"Invalid join operator in predicate: {predicate_str}")
+
     # Create the when/then/otherwise expression
-    return pl.when(condition).then(return_expr).otherwise(pl.lit(None))
+    return pl.when(condition_expr).then(return_expr).otherwise(pl.lit(None))
 
 
 def validate_jsonpath(jsonpath: str) -> str:
@@ -264,60 +297,172 @@ def handle_direct_array_access(root: str, index: str, rest: str) -> Expr:
         return pl.col(root).str.json_path_match(f"$[{index}]")
 
 
-def parse_predicate_expression(predicate_str: str) -> List[Tuple[str, str, Any]]:
+def parse_predicate_expression(
+    predicate_str: str,
+) -> List[Tuple[str, str, Any, Optional[str]]]:
     """
     Parse a predicate expression into components.
-    
-    Supports all comparison operators (==, !=, >, <, >=, <=) with both string 
-    and numeric values, but only allows && (AND) operators between conditions.
+
+    Supports all comparison operators (==, !=, >, <, >=, <=) with both string
+    and numeric values, and supports both && (AND) and || (OR) operators between conditions.
 
     Args:
         predicate_str: The predicate string to parse.
 
     Returns:
-        A list of tuples containing (field, operator, value).
+        A list of tuples containing (field, operator, value, join_op).
+        join_op can be "&&", "||", or None for the last condition.
 
     Raises:
-        ValueError: If the predicate cannot be parsed or contains unsupported operators like OR.
+        ValueError: If the predicate cannot be parsed.
     """
-    # Check if there's an OR operator, which we don't support
-    if "||" in predicate_str:
-        raise ValueError("OR operators (||) are not supported in predicates.")
-        
-    # Split the predicate by && operator
-    parts = predicate_str.split("&&")
-    result = []
-    
-    # Parse each individual condition
-    for condition in parts:
-        condition = condition.strip()
-        
-        # Match pattern for any comparison with a string value: @.field op "value"
-        string_match = re.match(r"@\.([a-zA-Z0-9_]+)\s*(==|!=|>|<|>=|<=)\s*\"([^\"]+)\"", condition)
-        if string_match:
-            field, op, value = string_match.groups()
-            result.append((field, op, value.strip()))
-            continue
-            
-        # Match pattern for any comparison with a numeric value: @.field op 100
-        numeric_match = re.match(r"@\.([a-zA-Z0-9_]+)\s*(==|!=|>|<|>=|<=)\s*(\d+(?:\.\d+)?)", condition)
-        if numeric_match:
-            field, op, value = numeric_match.groups()
-            # Convert the value to numeric type
-            value = float(value) if "." in value else int(value)
-            result.append((field, op, value))
-            continue
-            
-        # If we get here, the pattern is not supported
-        raise ValueError(f"Unsupported predicate condition: {condition}")
-    
+    # We'll parse predicate conditions with their joining operators
+    result: List[Tuple[str, str, Any, Optional[str]]] = []
+
+    # Track our position in the string
+    pos = 0
+    while pos < len(predicate_str):
+        # Skip any leading whitespace
+        while pos < len(predicate_str) and predicate_str[pos].isspace():
+            pos += 1
+
+        if pos >= len(predicate_str):
+            break
+
+        # Find the next comparison operator and extract the field and operator
+        # Skip past the @. prefix
+        if predicate_str[pos : pos + 2] == "@.":
+            pos += 2
+        else:
+            raise ValueError(f"Expected @. prefix at position {pos}")
+
+        # Extract the field name
+        field_start = pos
+        while pos < len(predicate_str) and (
+            predicate_str[pos].isalnum() or predicate_str[pos] == "_"
+        ):
+            pos += 1
+        field = predicate_str[field_start:pos]
+
+        # Skip whitespace before operator
+        while pos < len(predicate_str) and predicate_str[pos].isspace():
+            pos += 1
+
+        # Extract the operator
+        op_start = pos
+        while pos < len(predicate_str) and predicate_str[pos] in "=!<>":
+            pos += 1
+        op = predicate_str[op_start:pos]
+
+        # Skip whitespace after operator
+        while pos < len(predicate_str) and predicate_str[pos].isspace():
+            pos += 1
+
+        # Extract the value (string or numeric)
+        value: Any
+        if pos < len(predicate_str) and predicate_str[pos] == '"':
+            # String value
+            pos += 1  # Skip opening quote
+            value_start = pos
+            while pos < len(predicate_str) and predicate_str[pos] != '"':
+                pos += 1
+            value = predicate_str[value_start:pos]
+            pos += 1  # Skip closing quote
+        else:
+            # Numeric value or boolean
+            value_start = pos
+
+            # Check if it might be a boolean value
+            if predicate_str[pos : pos + 4] == "true":
+                value = True
+                pos += 4
+            elif predicate_str[pos : pos + 5] == "false":
+                value = False
+                pos += 5
+            else:
+                # Parse as numeric
+                while pos < len(predicate_str) and (
+                    predicate_str[pos].isdigit() or predicate_str[pos] == "."
+                ):
+                    pos += 1
+                value_str = predicate_str[value_start:pos]
+                if value_str:  # Make sure we have a non-empty string
+                    # Convert the value to numeric type
+                    value = float(value_str) if "." in value_str else int(value_str)
+                else:
+                    raise ValueError(
+                        f"Invalid value at position {pos} in predicate: {predicate_str}"
+                    )
+
+        # Skip whitespace after value
+        while pos < len(predicate_str) and predicate_str[pos].isspace():
+            pos += 1
+
+        # Look for joining operator (&& or ||)
+        join_op = None
+        if pos + 1 < len(predicate_str):
+            if predicate_str[pos : pos + 2] == "&&":
+                join_op = "&&"
+                pos += 2
+            elif predicate_str[pos : pos + 2] == "||":
+                join_op = "||"
+                pos += 2
+
+        # Add the parsed condition to our result
+        result.append((field, op, value, join_op))
+
+    if not result:
+        raise ValueError(f"Could not parse predicate: {predicate_str}")
+
     return result
+
+
+def parse_predicate_tokens(predicate_str: str) -> List[Union[str, Expr]]:
+    """
+    Parse a JSONPath predicate string into a list of tokens.
+
+    This function parses a predicate string and returns a list containing two types of tokens:
+    1. Combinator tokens: Either '&&' or '||' strings representing logical operators
+    2. Comparison tokens: polars Expr objects representing field comparison operations
+       created using the comparison_to_expr method
+
+    Args:
+        predicate_str: A predicate string from a JSONPath expression (e.g., "@.field1 > 10 && @.field2 == "active"")
+
+    Returns:
+        A list of tokens where each token is either a string ('&&', '||') or a polars Expr
+
+    Raises:
+        ValueError: If the predicate cannot be parsed
+    """
+    # Parse the predicate expression into components
+    try:
+        conditions = parse_predicate_expression(predicate_str)
+    except ValueError as e:
+        raise ValueError(f"Cannot parse predicate: {predicate_str} - {str(e)}")
+
+    if not conditions:
+        raise ValueError(f"No valid conditions found in predicate: {predicate_str}")
+
+    # Convert the conditions into tokens
+    tokens: List[Union[str, Expr]] = []
+
+    # Process each condition
+    for i, (field, op, value, join_op) in enumerate(conditions):
+        # Add a comparison token (converted to polars expr)
+        tokens.append(comparison_to_expr(field, op, value))
+
+        # Add a combinator token if there is one
+        if join_op:
+            tokens.append(cast(Union[str, Expr], join_op))
+
+    return tokens
 
 
 def handle_array_with_predicate(path: str) -> Optional[Expr]:
     """
     Handle array with predicate like $.items[?(@.field1 == "x1" && @.field2 == "x2")].name.
-    Supports all comparison operators (==, !=, >, <, >=, <=) joined by AND operators.
+    Supports all comparison operators (==, !=, >, <, >=, <=) joined by AND (&&) and OR (||) operators.
 
     Args:
         path: The JSONPath without the leading '$.' prefix.
@@ -349,66 +494,73 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
         # If parsing fails, return None to let other handlers try
         return None
 
-    # Build a JSONPath expression with all the conditions joined by AND
-    jsonpath_predicate_parts = []
-    
-    for field, op, value in predicate_conditions:
-        # Format the value based on its type
-        if isinstance(value, str):
-            # For string values, use double quotes in JSONPath
-            formatted_value = f'"{value}"'
-        else:
-            # For numeric values, no quotes
-            formatted_value = str(value)
-        
-        # Add the formatted condition
-        jsonpath_predicate_parts.append(f"@.{field}{op}{formatted_value}")
-    
-    # Join all conditions with AND
-    jsonpath_predicate = " && ".join(jsonpath_predicate_parts)
-
-    # Build the JSONPath expression to extract filtered data
-    # First split the array field path to get the root column
+    # Split the array field path to get the root column
     parts = array_field.split(".")
     root = parts[0]
+
+    # Get the fields we need for our predicate
+    fields_needed = [field for field, _, _, _ in predicate_conditions]
+
+    # Create struct fields for the JSON decode
+    struct_fields = [pl.Field(field, pl.String) for field in fields_needed]
+
+    # If we have a return field, add it to the struct
+    if return_field and return_field not in fields_needed:
+        struct_fields.append(pl.Field(return_field, pl.String))
 
     if len(parts) > 1:
         # We have a nested path like 'inventory.items'
         nested_part = ".".join(parts[1:])
 
-        # Construct a JSONPath expression that directly filters using JSONPath syntax
-        jsonpath_expr = f"$.{nested_part}[?({jsonpath_predicate})]"
-
-        if return_field:
-            # If we want to extract a specific field from the filtered items
-            jsonpath_expr += f".{return_field}"
-
         # Get the expression that would extract the array itself
         array_expr = pl.col(root).str.json_path_match(f"$.{nested_part}")
 
         # Check if the array is empty before trying to filter
-        return pl.when(
-            array_expr.eq("[]").or_(array_expr.is_null())
-        ).then(
-            pl.lit(None)
-        ).otherwise(
-            pl.col(root).str.json_path_match(jsonpath_expr)
+        expr = (
+            pl.when(array_expr.eq("[]").or_(array_expr.is_null()))
+            .then(pl.lit(None))
+            .otherwise(
+                # Decode the array to a list of structs we can filter
+                array_expr.str.json_decode(pl.List(pl.Struct(struct_fields)))
+            )
         )
     else:
         # This is a direct array in the root column
-        jsonpath_expr = f"$[?({jsonpath_predicate})]"
-
-        if return_field:
-            jsonpath_expr += f".{return_field}"
-
-        # Check if the array is empty before trying to filter
-        return pl.when(
-            pl.col(root).eq("[]").or_(pl.col(root).is_null())
-        ).then(
-            pl.lit(None)
-        ).otherwise(
-            pl.col(root).str.json_path_match(jsonpath_expr)
+        expr = (
+            pl.when(pl.col(root).eq("[]").or_(pl.col(root).is_null()))
+            .then(pl.lit(None))
+            .otherwise(
+                # Decode the array to a list of structs we can filter
+                pl.col(root).str.json_decode(pl.List(pl.Struct(struct_fields)))
+            )
         )
+
+    # If the array is not empty (expr is not None), build the filter predicate
+    # Start with the first condition
+    field, op, value, join_op = predicate_conditions[0]
+    condition_expr = comparison_to_expr(field, op, value)
+
+    # Add each subsequent condition, respecting the join operator
+    for i in range(1, len(predicate_conditions)):
+        field, op, value, _ = predicate_conditions[i]
+        next_expr = comparison_to_expr(field, op, value)
+
+        # Use the join operator from the previous condition to connect this one
+        prev_join_op = predicate_conditions[i - 1][3]
+        if prev_join_op == "&&":
+            condition_expr = condition_expr.and_(next_expr)
+        elif prev_join_op == "||":
+            condition_expr = condition_expr.or_(next_expr)
+
+    # Apply the filter to the expression
+    filtered_expr = expr.filter(condition_expr)
+
+    # If we need to extract a specific field from the filtered results
+    if return_field:
+        # Use list.eval() with element() to access the struct field from each element
+        return filtered_expr.list.eval(pl.element().struct.field(return_field))
+    else:
+        return filtered_expr
 
 
 def tokenize_path(path: str) -> List[Token]:
@@ -741,26 +893,30 @@ def process_wildcard_token(expr: Expr, tokens: List[Token], idx: int) -> Expr:
 
             # The last item contains our complete structure
             # First check if the array is empty before trying to decode
-            return pl.when(
-                # Check if it's an empty list
-                expr.eq("[]").or_(expr.is_null())
-            ).then(
-                # Return null for empty lists
-                pl.lit(None)
-            ).otherwise(
-                # Only try to decode when it's not empty
-                expr.str.json_decode(pl.List(pl.Struct([field_structs[-1]])))
+            return (
+                pl.when(
+                    # Check if it's an empty list
+                    expr.eq("[]").or_(expr.is_null())
+                )
+                .then(
+                    # Return null for empty lists
+                    pl.lit(None)
+                )
+                .otherwise(
+                    # Only try to decode when it's not empty
+                    expr.str.json_decode(pl.List(pl.Struct([field_structs[-1]])))
+                )
             )
 
     # Generic array decode if no field tokens follow
     # Check if it's an empty list first
-    return pl.when(
-        expr.eq("[]").or_(expr.is_null())
-    ).then(
-        pl.lit(None)
-    ).otherwise(
-        # Only try to decode when it's not empty
-        expr.str.json_decode()
+    return (
+        pl.when(expr.eq("[]").or_(expr.is_null()))
+        .then(pl.lit(None))
+        .otherwise(
+            # Only try to decode when it's not empty
+            expr.str.json_decode()
+        )
     )
 
 
@@ -799,21 +955,65 @@ def process_predicate_token(
     # For predicates, we first need to decode the array to access its elements
     if idx > 0 and tokens[idx - 1][0] in ("field", "index"):
         # Regular predicate after a field or index
-        expr = expr.str.json_decode(pl.List(pl.Struct(struct_fields)))
+        decoded_expr = expr.str.json_decode(pl.List(pl.Struct(struct_fields)))
 
-        # Now apply the filter
-        # Look ahead to see what to return
-        if idx + 1 < len(tokens) and tokens[idx + 1][0] == "field":
-            next_field = cast(str, tokens[idx + 1][1])
-            return_expr = pl.col(next_field)
-            expr = simple_predicate_to_expr(pred_expr, return_expr)
+        try:
+            # Try to parse the predicate into conditions
+            predicate_conditions = parse_predicate_expression(pred_expr)
+
+            # Start with the first condition
+            field, op, value, join_op = predicate_conditions[0]
+            condition_expr = comparison_to_expr(field, op, value)
+
+            # Add each subsequent condition, respecting the join operator
+            for i in range(1, len(predicate_conditions)):
+                field, op, value, _ = predicate_conditions[i]
+                next_expr = comparison_to_expr(field, op, value)
+
+                # Use the join operator from the previous condition to connect this one
+                prev_join_op = predicate_conditions[i - 1][3]
+                if prev_join_op == "&&":
+                    condition_expr = condition_expr.and_(next_expr)
+                elif prev_join_op == "||":
+                    condition_expr = condition_expr.or_(next_expr)
+
+            # Apply the filter to the decoded expression
+            filtered_expr = decoded_expr.filter(condition_expr)
+
+            # Look ahead to see what to return
+            if idx + 1 < len(tokens) and tokens[idx + 1][0] == "field":
+                next_field = cast(str, tokens[idx + 1][1])
+                result_expr = filtered_expr.list.eval(
+                    pl.element().struct.field(next_field)
+                )
+            else:
+                # Return the whole matching objects
+                result_expr = filtered_expr
+
             # Ensure we preserve the parent context in the expression
             if parent_field:
-                expr = expr.alias(f"{parent_field}_filtered")
-            return expr
-        else:
-            # Return the whole matching objects
-            return simple_predicate_to_expr(pred_expr, expr)
+                result_expr = result_expr.alias(f"{parent_field}_filtered")
+
+            return result_expr
+
+        except ValueError:
+            # Fall back to the old behavior if parsing fails
+            # This ensures backward compatibility
+            expr = decoded_expr
+
+            # Now apply the filter
+            # Look ahead to see what to return
+            if idx + 1 < len(tokens) and tokens[idx + 1][0] == "field":
+                next_field = cast(str, tokens[idx + 1][1])
+                return_expr = pl.col(next_field)
+                expr = simple_predicate_to_expr(pred_expr, return_expr)
+                # Ensure we preserve the parent context in the expression
+                if parent_field:
+                    expr = expr.alias(f"{parent_field}_filtered")
+                return expr
+            else:
+                # Return the whole matching objects
+                return simple_predicate_to_expr(pred_expr, expr)
 
     return expr
 
@@ -822,106 +1022,126 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
     """
     Handle array wildcard access patterns like $.foo.bar[*].baz,
     gracefully handling empty lists.
-    
+
     Args:
         path: The JSONPath without the leading '$.' prefix.
-        
+
     Returns:
         A polars Expression that safely extracts data from arrays.
     """
     if "[*]" not in path:
         return None
-        
+
     # Split the path at the wildcard
     parts = path.split("[*]")
     field_path = parts[0]  # e.g., "foo.bar"
     rest_path = parts[1] if len(parts) > 1 else ""  # e.g., ".baz"
-    
+
     # Split field path into components
     field_parts = field_path.split(".")
     root = field_parts[0]  # The root column name
-    
+
     if len(field_parts) > 1:
         # Nested field before wildcard, e.g., "foo.bar"
         nested_path = ".".join(field_parts[1:])
-        
+
         # First, extract the array itself
         array_expr = pl.col(root).str.json_path_match(f"$.{nested_path}")
-        
+
         # Then check if it's an empty array before trying to decode
         if rest_path:
             # If there's a nested field after the wildcard
             rest_path = rest_path.lstrip(".")  # Remove leading dot if present
-            
+
             # Parse nested fields for proper schema construction
             nested_parts = rest_path.split(".")
-            
+
             # Build nested schema from inside out
             current_schema: pl.DataType = pl.String()
-            
+
             for field in reversed(nested_parts):
                 current_schema = pl.Struct([pl.Field(field, current_schema)])
-            
-            return pl.when(
-                # Check if it's an empty list
-                array_expr.eq("[]").or_(array_expr.is_null())
-            ).then(
-                # Return null for empty lists
-                pl.lit(None)
-            ).otherwise(
-                # Only try to decode when it's not empty
-                array_expr.str.json_decode(pl.List(current_schema))
+
+            return (
+                pl.when(
+                    # Check if it's an empty list
+                    array_expr.eq("[]").or_(array_expr.is_null())
+                )
+                .then(
+                    # Return null for empty lists
+                    pl.lit(None)
+                )
+                .otherwise(
+                    # Only try to decode when it's not empty
+                    array_expr.str.json_decode(pl.List(current_schema))
+                )
             )
         else:
             # Just the array itself
-            return pl.when(
-                # Check if it's an empty list
-                array_expr.eq("[]").or_(array_expr.is_null())
-            ).then(
-                # Return null for empty lists
-                pl.lit(None)
-            ).otherwise(
-                # Only try to decode when it's not empty
-                # Let Polars infer the schema from the JSON data
-                array_expr.str.json_decode(infer_schema_length=None)
+            return (
+                pl.when(
+                    # Check if it's an empty list
+                    array_expr.eq("[]").or_(array_expr.is_null())
+                )
+                .then(
+                    # Return null for empty lists
+                    pl.lit(None)
+                )
+                .otherwise(
+                    # Only try to decode when it's not empty
+                    # Let Polars infer the schema from the JSON data
+                    array_expr.str.json_decode(infer_schema_length=None)
+                )
             )
     else:
         # Direct array access on root column, e.g., "items[*].price"
         if rest_path:
             # With nested field after wildcard
             rest_path = rest_path.lstrip(".")  # Remove leading dot if present
-            
+
             # Parse nested fields for proper schema construction
             nested_parts = rest_path.split(".")
-            
+
             # Build nested schema from inside out
             curr_schema: pl.DataType = pl.String()
-            
+
             for field in reversed(nested_parts):
                 curr_schema = pl.Struct([pl.Field(field, curr_schema)])
-            
-            return pl.when(
-                # Check if it's an empty list
-                pl.col(root).eq("[]").or_(pl.col(root).is_null())
-            ).then(
-                # Return null for empty lists
-                pl.lit(None)
-            ).otherwise(
-                # Only try to decode when it's not empty
-                pl.col(root).str.json_decode(pl.List(curr_schema))
+
+            return (
+                pl.when(
+                    # Check if it's an empty list
+                    pl.col(root)
+                    .eq("[]")
+                    .or_(pl.col(root).is_null())
+                )
+                .then(
+                    # Return null for empty lists
+                    pl.lit(None)
+                )
+                .otherwise(
+                    # Only try to decode when it's not empty
+                    pl.col(root).str.json_decode(pl.List(curr_schema))
+                )
             )
         else:
             # Just the array itself
-            return pl.when(
-                # Check if it's an empty list
-                pl.col(root).eq("[]").or_(pl.col(root).is_null())
-            ).then(
-                # Return null for empty lists
-                pl.lit(None)
-            ).otherwise(
-                # Only try to decode when it's not empty
-                # Let Polars infer the schema from the JSON data
-                pl.col(root).str.json_decode(infer_schema_length=None)
+            return (
+                pl.when(
+                    # Check if it's an empty list
+                    pl.col(root)
+                    .eq("[]")
+                    .or_(pl.col(root).is_null())
+                )
+                .then(
+                    # Return null for empty lists
+                    pl.lit(None)
+                )
+                .otherwise(
+                    # Only try to decode when it's not empty
+                    # Let Polars infer the schema from the JSON data
+                    pl.col(root).str.json_decode(infer_schema_length=None)
+                )
             )
 
 
