@@ -197,3 +197,26 @@ class TestJsonPathToPolars:
         # TODO: Understand why meta.eq does not agree here
         assert result.meta.tree_format(return_as_string=True) == expected.meta.tree_format(return_as_string=True)
         # assert result.meta.eq(expected)
+
+    def test_array_index_before_predicate(self):
+        """Test array indexing followed by predicate filtering like '$.books[0].chapters[?(@.pages>10)].title'."""
+        path = "$.books[0].chapters[?(@.pages>10)].title"
+        result = jsonpath_to_polars(path)
+
+        base_expr = pl.col("books").str.json_path_match("$[0].chapters")
+        expected = (
+            pl.when(base_expr.eq("[]").or_(base_expr.is_null()))
+            .then(pl.lit(None))
+            .otherwise(
+                base_expr.str.json_decode(pl.List(pl.Struct([pl.Field("title", pl.Utf8), pl.Field("pages", pl.Utf8)])))
+                .list.eval(
+                    pl.when(pl.element().struct.field("pages").cast(pl.Float32).gt(float(10)))
+                    .then(pl.element().struct.field("title"))
+                    .otherwise(pl.lit(None))
+                )
+                .list.drop_nulls()
+            )
+        )
+        # TODO: Understand why meta.eq does not agree here
+        assert result.meta.tree_format(return_as_string=True) == expected.meta.tree_format(return_as_string=True)
+        # assert result.meta.eq(expected)

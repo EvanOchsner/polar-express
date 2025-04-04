@@ -191,7 +191,6 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
         if rest_tokens:
             # Create a JSONPath string from the tokens after the root
             json_path = tokens_to_jsonpath(rest_tokens)
-            # Use the json_path as is, keeping the "$" prefix
             base_expr = pl.col(root).str.json_path_match(json_path)
         else:
             base_expr = pl.col(root)
@@ -352,6 +351,19 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
     if predicate_end + 2 < len(rest) and rest[predicate_end + 2] == ".":
         return_field = rest[predicate_end + 3:]
 
+    # Parse the field path before predicate into tokens
+    tokens = tokenize_path(array_field)
+
+    # Extract the root column name from the first token
+    if not tokens:
+        return None
+
+    root = ""
+    if tokens[0][0] == "field":
+        root = str(tokens[0][1])
+    else:
+        return None  # First token must be a field name
+
     # Build a dtype for the encoded list we are filtering
     struct_fields = predicate_fields
     if return_field:
@@ -361,15 +373,20 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
     # Convert the predicate into a pl.Expr
     predicate_expr = predicate_parser.convert_to_polars(predicate_str)
 
-    # Build the JSONPath expression to extract filtered data
-    # First split the array field path to get the root column
-    parts = array_field.split(".")
-    root = parts[0]
-    base_expr = pl.col(root)
-
-    if len(parts) > 1:  # We need to traverse a path to the array
-        path = ".".join(parts[1:])
-        base_expr = pl.col(root).str.json_path_match(f"$.{path}")
+    # Determine base expression based on token count
+    if len(tokens) == 1:
+        # Direct array access on root column (e.g., "users[?(...))]")
+        base_expr = pl.col(root)
+    else:
+        # Complex path before predicate (e.g., "users.profiles[0].data[?(...))]")
+        # Convert tokens to a proper JSONPath string (excluding the root field)
+        rest_tokens = tokens[1:]
+        if rest_tokens:
+            # Create a JSONPath string from the tokens after the root
+            json_path = tokens_to_jsonpath(rest_tokens)
+            base_expr = pl.col(root).str.json_path_match(json_path)
+        else:
+            base_expr = pl.col(root)
 
     if return_field:  # We just return this field for the matching items
         return_val = pl.element().struct.field(return_field)

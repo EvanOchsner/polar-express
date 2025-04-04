@@ -246,13 +246,13 @@ def jsonpath_to_polars(jsonpath: str) -> Expr:
     if expr is not None:
         return expr
 
-    # Handle various array access patterns
-    expr = handle_array_access(path)
+    # Handle array with predicate
+    expr = handle_array_with_predicate(path)
     if expr is not None:
         return expr
 
-    # Handle array with predicate
-    expr = handle_array_with_predicate(path)
+    # Handle various array access patterns
+    expr = handle_array_access(path)
     if expr is not None:
         return expr
 
