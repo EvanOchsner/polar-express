@@ -13,18 +13,18 @@ Polar Express provides a bridge between JSONPath query syntax and Polars express
 ## Installation
 
 ```bash
-pip install polars
+pip install polars<1.10.0
 # Clone this repository
 git clone https://github.com/evanochsner/polar-express.git
 cd polar-express
+pip install -e .
 ```
 
 ## Usage
 
 ```python
 import polars as pl
-
-from jsonpath_to_polars import jsonpath_to_polars
+from polar_express import jsonpath_to_polars
 
 # Create a DataFrame with JSON data in string columns
 df = pl.DataFrame({"user_data": ['{"name": "Alice", "address": {"city": "New York"}}']})
@@ -35,6 +35,10 @@ result = df.with_columns([expr.alias("city")])
 
 print(result)
 ```
+
+For more examples, check the `examples/` directory:
+- `basic_usage.py`: Simple extraction of fields from JSON
+- `advanced_usage.py`: Building ETL pipelines with PolarMapper
 
 ## Supported JSONPath Features
 
@@ -55,13 +59,36 @@ pip install pytest pytest-xdist mypy black ruff
 ./run_tests.py
 
 # Run type checking
-mypy jsonpath_to_polars.py
+mypy polar_express/
 
 # Format code
 black . --line-length 120
 
 # Lint code
 ruff .
+```
+
+## Package Structure
+
+```
+polar_express/
+├── polar_express/            # Main package directory
+│   ├── __init__.py           # Package exports
+│   ├── core/                 # Core functionality
+│   │   ├── jsonpath_expr.py  # JSONPathExpr class
+│   │   ├── polar_mapper.py   # PolarMapper class 
+│   ├── parsing/              # Parsing components
+│   │   ├── predicate_parser.py  # Logic for parsing predicates
+│   │   ├── path_parser.py    # Path parsing logic
+│   ├── conversion/           # Conversion logic
+│   │   ├── jsonpath_to_polars.py  # Main conversion function
+│   │   ├── handlers/         # Specialized handlers
+│   │       ├── array_handlers.py
+│   │       ├── field_handlers.py
+│   ├── utils/                # Utility functions
+│       ├── tokens.py         # Token-related utilities
+├── examples/                 # Example usage scripts
+├── tests/                    # Tests
 ```
 
 ## License

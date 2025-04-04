@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polar_express"
+version = "0.1.0"
+authors = [
+    {name = "Evan Ochsner", email = "evan.ochsner@example.com"},
+]
+description = "A Python utility for converting JSONPath expressions to Polars expressions"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "polars>=0.18.0,<1.10.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/evanochsner/polar-express"
+"Bug Tracker" = "https://github.com/evanochsner/polar-express/issues"
+
+[tool.setuptools]
+packages = ["polar_express"]
+
+[tool.black]
+line-length = 120
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+select = ["E", "F", "I", "W"]
+ignore = []
+extend-exclude = [
+    ".git",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
