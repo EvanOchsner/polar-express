@@ -2,35 +2,11 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 
 import polars as pl
+import predicate_parser
 from polars import Expr
 
 # Type for tokens produced during parsing
 Token = Tuple[str, Optional[Union[str, int, Dict[str, Any]]]]
-
-
-def parse_predicate(predicate_str: str) -> Tuple[str, Set[str]]:
-    """
-    Parse a JSONPath predicate expression and extract referenced fields.
-
-    Args:
-        predicate_str: A predicate string from a JSONPath expression (inside [?...]).
-
-    Returns:
-        A tuple containing:
-        - A transformed predicate string for polars evaluation
-        - A set of field names referenced in the predicate
-    """
-    # Handle parentheses in predicates
-    if predicate_str.startswith("(") and predicate_str.endswith(")"):
-        predicate_str = predicate_str[1:-1]
-
-    # Replace @.field with field for polars expression
-    transformed = re.sub(r"@\.([a-zA-Z0-9_]+)", r"\1", predicate_str)
-
-    # Extract all field references
-    fields = set(re.findall(r"@\.([a-zA-Z0-9_]+)", predicate_str))
-
-    return transformed, fields
 
 
 def comparison_to_expr(field: str, op: str, value: Any) -> Expr:
@@ -109,21 +85,23 @@ def simple_predicate_to_expr(predicate_str: str, return_expr: Expr) -> Expr:
 
 def validate_jsonpath(jsonpath: str) -> str:
     """
-    Validate JSONPath and strip the leading '$.' prefix.
+    Validate JSONPath and strip the leading '$.' or `$` (for initial array access like `$[0].foo`) prefix.
 
     Args:
-        jsonpath: A JSONPath string starting with '$.'.
+        jsonpath: A JSONPath string starting with '$'.
 
     Returns:
-        The JSONPath without the leading '$.' prefix.
+        The JSONPath without the leading '$.' or `$` prefix.
 
     Raises:
         ValueError: If the JSONPath format is invalid.
     """
-    if not jsonpath.startswith("$."):
-        raise ValueError("JSONPath must start with '$.'")
-
-    return jsonpath[2:]  # Remove "$."
+    if jsonpath.startswith("$."):
+        return jsonpath[2:]  # Remove "$."
+    elif jsonpath.startswith("$["):
+        return jsonpath[1:]  # Remove "$"
+    else:
+        raise ValueError(f"Invalid JSONPath format: {jsonpath}")
 
 
 def handle_simple_field_access(path: str) -> Optional[Expr]:
@@ -417,48 +395,6 @@ def parse_predicate_expression(
     return result
 
 
-def parse_predicate_tokens(predicate_str: str) -> List[Union[str, Expr]]:
-    """
-    Parse a JSONPath predicate string into a list of tokens.
-
-    This function parses a predicate string and returns a list containing two types of tokens:
-    1. Combinator tokens: Either '&&' or '||' strings representing logical operators
-    2. Comparison tokens: polars Expr objects representing field comparison operations
-       created using the comparison_to_expr method
-
-    Args:
-        predicate_str: A predicate string from a JSONPath expression (e.g., "@.field1 > 10 && @.field2 == "active"")
-
-    Returns:
-        A list of tokens where each token is either a string ('&&', '||') or a polars Expr
-
-    Raises:
-        ValueError: If the predicate cannot be parsed
-    """
-    # Parse the predicate expression into components
-    try:
-        conditions = parse_predicate_expression(predicate_str)
-    except ValueError as e:
-        raise ValueError(f"Cannot parse predicate: {predicate_str} - {str(e)}")
-
-    if not conditions:
-        raise ValueError(f"No valid conditions found in predicate: {predicate_str}")
-
-    # Convert the conditions into tokens
-    tokens: List[Union[str, Expr]] = []
-
-    # Process each condition
-    for i, (field, op, value, join_op) in enumerate(conditions):
-        # Add a comparison token (converted to polars expr)
-        tokens.append(comparison_to_expr(field, op, value))
-
-        # Add a combinator token if there is one
-        if join_op:
-            tokens.append(cast(Union[str, Expr], join_op))
-
-    return tokens
-
-
 def handle_array_with_predicate(path: str) -> Optional[Expr]:
     """
     Handle array with predicate like $.items[?(@.field1 == "x1" && @.field2 == "x2")].name.
@@ -477,90 +413,48 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
     array_path_parts = path.split("[?(")
     array_field = array_path_parts[0]
 
-    # Extract the predicate and the return field
+    # Extract the predicate, predicate fields and the return field
     rest = array_path_parts[1]
     predicate_end = rest.find(")]")
     predicate_str = rest[:predicate_end]
-
-    # Extract return field if it exists after the predicate
+    predicate_fields = predicate_parser.extract_fields_from_predicate(predicate_str)
     return_field = None
     if predicate_end + 2 < len(rest) and rest[predicate_end + 2] == ".":
         return_field = rest[predicate_end + 3 :]
 
-    try:
-        # Parse the predicate components - now returns a list of conditions
-        predicate_conditions = parse_predicate_expression(predicate_str)
-    except ValueError:
-        # If parsing fails, return None to let other handlers try
-        return None
+   # Build a dtype for the encoded list we are filtering
+    struct_fields = predicate_fields
+    if return_field:
+        struct_fields.append(return_field)
+    encoded_list_dtype = pl.List(pl.Struct([pl.Field(f, pl.Utf8) for f in struct_fields]))
 
-    # Split the array field path to get the root column
+    # Convert the predicate into a pl.Expr
+    predicate_expr = predicate_parser.convert_to_polars(predicate_str)
+
+    # Build the JSONPath expression to extract filtered data
+    # First split the array field path to get the root column
     parts = array_field.split(".")
     root = parts[0]
+    base_expr = pl.col(root)
 
-    # Get the fields we need for our predicate
-    fields_needed = [field for field, _, _, _ in predicate_conditions]
+    if len(parts) > 1:  # We need to traverse a path to the array
+        path = ".".join(parts[1:])
+        base_expr = pl.col(root).str.json_path_match(f"$.{path}")
 
-    # Create struct fields for the JSON decode
-    struct_fields = [pl.Field(field, pl.String) for field in fields_needed]
+    if return_field:  # We just return this field for the matching items
+        return_val = pl.element().struct.field(return_field)
+    else:  # We return a struct with all fields referenced in the predicate for the matching items
+        return_val = pl.element()
 
-    # If we have a return field, add it to the struct
-    if return_field and return_field not in fields_needed:
-        struct_fields.append(pl.Field(return_field, pl.String))
-
-    if len(parts) > 1:
-        # We have a nested path like 'inventory.items'
-        nested_part = ".".join(parts[1:])
-
-        # Get the expression that would extract the array itself
-        array_expr = pl.col(root).str.json_path_match(f"$.{nested_part}")
-
-        # Check if the array is empty before trying to filter
-        expr = (
-            pl.when(array_expr.eq("[]").or_(array_expr.is_null()))
-            .then(pl.lit(None))
-            .otherwise(
-                # Decode the array to a list of structs we can filter
-                array_expr.str.json_decode(pl.List(pl.Struct(struct_fields)))
-            )
+    return (
+        pl.when(base_expr.eq("[]").or_(base_expr.is_null()))
+        .then(pl.lit(None))
+        .otherwise(
+            base_expr.str.json_decode(encoded_list_dtype)
+            .list.eval(pl.when(predicate_expr).then(return_val).otherwise(pl.lit(None)))
+            .list.drop_nulls()
         )
-    else:
-        # This is a direct array in the root column
-        expr = (
-            pl.when(pl.col(root).eq("[]").or_(pl.col(root).is_null()))
-            .then(pl.lit(None))
-            .otherwise(
-                # Decode the array to a list of structs we can filter
-                pl.col(root).str.json_decode(pl.List(pl.Struct(struct_fields)))
-            )
-        )
-
-    # If the array is not empty (expr is not None), build the filter predicate
-    # Start with the first condition
-    field, op, value, join_op = predicate_conditions[0]
-    condition_expr = comparison_to_expr(field, op, value)
-
-    # Add each subsequent condition, respecting the join operator
-    for i in range(1, len(predicate_conditions)):
-        field, op, value, _ = predicate_conditions[i]
-        next_expr = comparison_to_expr(field, op, value)
-
-        # Use the join operator from the previous condition to connect this one
-        prev_join_op = predicate_conditions[i - 1][3]
-        if prev_join_op == "&&":
-            condition_expr = condition_expr.and_(next_expr)
-        elif prev_join_op == "||":
-            condition_expr = condition_expr.or_(next_expr)
-
-    # Apply the filter to the expression
-    filtered_expr = expr.filter(condition_expr)
-
-    # If we need to extract a specific field from the filtered results
-    if return_field:
-        # Use list.eval() with element() to access the struct field from each element
-        return filtered_expr.list.eval(pl.element().struct.field(return_field))
-    else:
-        return filtered_expr
+    )
 
 
 def tokenize_path(path: str) -> List[Token]:
@@ -667,8 +561,9 @@ def handle_predicate_token(path: str, start_idx: int) -> Token:
         i += 1
 
     # Parse the predicate and collect field references
-    parsed_pred, fields = parse_predicate(predicate_str)
-    return ("predicate", {"expr": parsed_pred, "fields": fields})
+    fields = predicate_parser.extract_fields_from_predicate(predicate_str)
+    pred_expr = predicate_parser.convert_to_polars(predicate_str)
+    return ("predicate", {"expr": pred_expr, "fields": fields})
 
 
 def build_nested_schema(tokens: List[Token], start_idx: int) -> Tuple[pl.DataType, int]:
@@ -920,9 +815,7 @@ def process_wildcard_token(expr: Expr, tokens: List[Token], idx: int) -> Expr:
     )
 
 
-def process_predicate_token(
-    expr: Expr, tokens: List[Token], idx: int, token_value: Any
-) -> Expr:
+def process_predicate_token(expr: Expr, tokens: List[Token], idx: int, token_value: Any) -> Expr:
     """
     Process a predicate token and update the expression.
 
@@ -946,74 +839,26 @@ def process_predicate_token(
         parent_field = cast(str, tokens[idx - 1][1])
 
     # First decode the JSON array
-    if not fields:
-        # If no fields were extracted from the predicate, default to common ones
-        struct_fields = [pl.Field("price", pl.Float64), pl.Field("name", pl.String)]
-    else:
-        struct_fields = [pl.Field(field, pl.String) for field in fields]
+    struct_fields = [pl.Field(field, pl.String) for field in fields]
 
     # For predicates, we first need to decode the array to access its elements
     if idx > 0 and tokens[idx - 1][0] in ("field", "index"):
         # Regular predicate after a field or index
-        decoded_expr = expr.str.json_decode(pl.List(pl.Struct(struct_fields)))
+        expr = expr.str.json_decode(pl.List(pl.Struct(struct_fields)))
 
-        try:
-            # Try to parse the predicate into conditions
-            predicate_conditions = parse_predicate_expression(pred_expr)
-
-            # Start with the first condition
-            field, op, value, join_op = predicate_conditions[0]
-            condition_expr = comparison_to_expr(field, op, value)
-
-            # Add each subsequent condition, respecting the join operator
-            for i in range(1, len(predicate_conditions)):
-                field, op, value, _ = predicate_conditions[i]
-                next_expr = comparison_to_expr(field, op, value)
-
-                # Use the join operator from the previous condition to connect this one
-                prev_join_op = predicate_conditions[i - 1][3]
-                if prev_join_op == "&&":
-                    condition_expr = condition_expr.and_(next_expr)
-                elif prev_join_op == "||":
-                    condition_expr = condition_expr.or_(next_expr)
-
-            # Apply the filter to the decoded expression
-            filtered_expr = decoded_expr.filter(condition_expr)
-
-            # Look ahead to see what to return
-            if idx + 1 < len(tokens) and tokens[idx + 1][0] == "field":
-                next_field = cast(str, tokens[idx + 1][1])
-                result_expr = filtered_expr.list.eval(
-                    pl.element().struct.field(next_field)
-                )
-            else:
-                # Return the whole matching objects
-                result_expr = filtered_expr
-
+        # Now apply the filter
+        # Look ahead to see what to return
+        if idx + 1 < len(tokens) and tokens[idx + 1][0] == "field":
+            next_field = cast(str, tokens[idx + 1][1])
+            return_expr = pl.col(next_field)
+            expr = simple_predicate_to_expr(pred_expr, return_expr)
             # Ensure we preserve the parent context in the expression
             if parent_field:
-                result_expr = result_expr.alias(f"{parent_field}_filtered")
-
-            return result_expr
-
-        except ValueError:
-            # Fall back to the old behavior if parsing fails
-            # This ensures backward compatibility
-            expr = decoded_expr
-
-            # Now apply the filter
-            # Look ahead to see what to return
-            if idx + 1 < len(tokens) and tokens[idx + 1][0] == "field":
-                next_field = cast(str, tokens[idx + 1][1])
-                return_expr = pl.col(next_field)
-                expr = simple_predicate_to_expr(pred_expr, return_expr)
-                # Ensure we preserve the parent context in the expression
-                if parent_field:
-                    expr = expr.alias(f"{parent_field}_filtered")
-                return expr
-            else:
-                # Return the whole matching objects
-                return simple_predicate_to_expr(pred_expr, expr)
+                expr = expr.alias(f"{parent_field}_filtered")
+            return expr
+        else:
+            # Return the whole matching objects
+            return simple_predicate_to_expr(pred_expr, expr)
 
     return expr
 
@@ -1022,12 +867,6 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
     """
     Handle array wildcard access patterns like $.foo.bar[*].baz,
     gracefully handling empty lists.
-
-    Args:
-        path: The JSONPath without the leading '$.' prefix.
-
-    Returns:
-        A polars Expression that safely extracts data from arrays.
     """
     if "[*]" not in path:
         return None
@@ -1041,111 +880,46 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
     field_parts = field_path.split(".")
     root = field_parts[0]  # The root column name
 
-    if len(field_parts) > 1:
-        # Nested field before wildcard, e.g., "foo.bar"
-        nested_path = ".".join(field_parts[1:])
-
-        # First, extract the array itself
-        array_expr = pl.col(root).str.json_path_match(f"$.{nested_path}")
-
-        # Then check if it's an empty array before trying to decode
-        if rest_path:
-            # If there's a nested field after the wildcard
-            rest_path = rest_path.lstrip(".")  # Remove leading dot if present
-
-            # Parse nested fields for proper schema construction
-            nested_parts = rest_path.split(".")
-
-            # Build nested schema from inside out
-            current_schema: pl.DataType = pl.String()
-
-            for field in reversed(nested_parts):
-                current_schema = pl.Struct([pl.Field(field, current_schema)])
-
-            return (
-                pl.when(
-                    # Check if it's an empty list
-                    array_expr.eq("[]").or_(array_expr.is_null())
-                )
-                .then(
-                    # Return null for empty lists
-                    pl.lit(None)
-                )
-                .otherwise(
-                    # Only try to decode when it's not empty
-                    array_expr.str.json_decode(pl.List(current_schema))
-                )
-            )
+    if rest_path == "":  # No trailing field, decode whole struct elements inside list
+        if len(field_parts) > 1:
+            # Nested field before wildcard, e.g., "foo.bar"
+            nested_path = ".".join(field_parts[1:])
+            base_expr = pl.col(root).str.json_path_match(f"$.{nested_path}")
         else:
-            # Just the array itself
-            return (
-                pl.when(
-                    # Check if it's an empty list
-                    array_expr.eq("[]").or_(array_expr.is_null())
-                )
-                .then(
-                    # Return null for empty lists
-                    pl.lit(None)
-                )
-                .otherwise(
-                    # Only try to decode when it's not empty
-                    # Let Polars infer the schema from the JSON data
-                    array_expr.str.json_decode(infer_schema_length=None)
-                )
-            )
-    else:
-        # Direct array access on root column, e.g., "items[*].price"
-        if rest_path:
-            # With nested field after wildcard
-            rest_path = rest_path.lstrip(".")  # Remove leading dot if present
+            # Direct array access on root column
+            base_expr = pl.col(root)
+        decoded_expr = base_expr.str.json_decode(infer_schema_length=None)
 
-            # Parse nested fields for proper schema construction
-            nested_parts = rest_path.split(".")
-
-            # Build nested schema from inside out
-            curr_schema: pl.DataType = pl.String()
-
-            for field in reversed(nested_parts):
-                curr_schema = pl.Struct([pl.Field(field, curr_schema)])
-
-            return (
-                pl.when(
-                    # Check if it's an empty list
-                    pl.col(root)
-                    .eq("[]")
-                    .or_(pl.col(root).is_null())
-                )
-                .then(
-                    # Return null for empty lists
-                    pl.lit(None)
-                )
-                .otherwise(
-                    # Only try to decode when it's not empty
-                    pl.col(root).str.json_decode(pl.List(curr_schema))
-                )
-            )
+    else:  # Only decode the trailing field portion of each element inside list
+        if len(field_parts) > 1:
+            # Nested field before wildcard, e.g., "foo.bar"
+            nested_path = ".".join(field_parts[1:])
+            base_expr = pl.col(root).str.json_path_match(f"$.{nested_path}")
         else:
-            # Just the array itself
-            return (
-                pl.when(
-                    # Check if it's an empty list
-                    pl.col(root)
-                    .eq("[]")
-                    .or_(pl.col(root).is_null())
-                )
-                .then(
-                    # Return null for empty lists
-                    pl.lit(None)
-                )
-                .otherwise(
-                    # Only try to decode when it's not empty
-                    # Let Polars infer the schema from the JSON data
-                    pl.col(root).str.json_decode(infer_schema_length=None)
-                )
-            )
+            # Direct array access on root column
+            base_expr = pl.col(root)
+
+        rest_path_clean = rest_path.lstrip(".")  # Remove leading dot if present
+        nested_parts = rest_path_clean.split(".")
+
+        # Build the schema for list elements and decode
+        current_schema: pl.DataType = pl.Utf8()
+        for field in reversed(nested_parts):
+            current_schema = pl.Struct([pl.Field(field, current_schema)])
+        decoded_expr = base_expr.str.json_decode(pl.List(current_schema))
+
+        # Build the nested field access chain
+        field_expr = pl.element()
+        for field in nested_parts:
+            field_expr = field_expr.struct.field(field)
+
+        # Apply the field access to each element in the list
+        decoded_expr = decoded_expr.list.eval(field_expr)
+
+    return pl.when(base_expr.eq("[]").or_(base_expr.is_null())).then(pl.lit(None)).otherwise(decoded_expr)
 
 
-def has_nested_array_wildcards_or_predicates(path: str) -> bool:
+def has_multiple_array_patterns(path: str) -> bool:
     """
     Determines if a JSONPath has multiple array wildcards or predicates.
 
@@ -1167,7 +941,7 @@ def has_nested_array_wildcards_or_predicates(path: str) -> bool:
     )
 
 
-def handle_nested_arrays_special(path: str) -> Optional[Expr]:
+def handle_multiple_array_patterns(path: str) -> Optional[Expr]:
     """
     Handle JSONPaths that contain nested arrays with wildcards or predicates.
     These are hard to process fully, so we convert to string at the first array.
@@ -1178,7 +952,7 @@ def handle_nested_arrays_special(path: str) -> Optional[Expr]:
     Returns:
         A polars Expression that returns the JSON as a string at the point of the first wildcard/predicate array.
     """
-    if not has_nested_array_wildcards_or_predicates(path):
+    if not has_multiple_array_patterns(path):
         return None
 
     # Find the first array with wildcard or predicate
@@ -1260,7 +1034,7 @@ def jsonpath_to_polars(jsonpath: str) -> Expr:
     Convert a JSONPath expression to a polars Expression.
 
     Args:
-        jsonpath: A JSONPath string starting with '$.'.
+        jsonpath: A JSONPath string starting with '$'.
 
     Returns:
         A polars Expression that extracts data according to the JSONPath.
@@ -1268,13 +1042,13 @@ def jsonpath_to_polars(jsonpath: str) -> Expr:
     Raises:
         ValueError: If the JSONPath format is invalid or unsupported.
     """
-    # Validate and strip the leading "$."
+    # Validate and strip $ prefix
     path = validate_jsonpath(jsonpath)
 
     # Try each handler in sequence, returning the first successful result
 
     # Handle nested arrays with wildcards or predicates specially
-    expr = handle_nested_arrays_special(path)
+    expr = handle_multiple_array_patterns(path)
     if expr is not None:
         return expr
 
