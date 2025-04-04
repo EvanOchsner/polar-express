@@ -1,7 +1,7 @@
 """Handlers for array access in JSONPath expressions."""
 
 import re
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import polars as pl
 from polars import Expr

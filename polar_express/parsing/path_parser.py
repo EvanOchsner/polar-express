@@ -1,7 +1,6 @@
 """Parsing utilities for JSONPath strings."""
 
-import re
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import polars as pl
 from polars import Expr

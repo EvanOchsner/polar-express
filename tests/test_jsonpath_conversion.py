@@ -2,7 +2,6 @@ import polars as pl
 import pytest
 
 from polar_express.conversion.jsonpath_to_polars import (
-    comparison_to_expr,
     jsonpath_to_polars,
 )
 

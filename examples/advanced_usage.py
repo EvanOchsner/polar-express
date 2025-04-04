@@ -8,8 +8,10 @@ This example demonstrates:
 """
 
 import json
+
 import polars as pl
-from polar_express import JSONPathExpr, PolarMapper, jsonpath_to_polars
+
+from polar_express import JSONPathExpr, PolarMapper
 
 # Sample JSON data
 json_data = {

@@ -7,7 +7,6 @@ from polar_express.conversion.handlers.array_handlers import (
     handle_multiple_array_indices,
     handle_multiple_array_patterns,
 )
-
 from polar_express.conversion.handlers.field_handlers import (
     handle_simple_field_access,
 )

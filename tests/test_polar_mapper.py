@@ -1,10 +1,8 @@
 import io
 import json
-from typing import List
 
 import polars as pl
 import pytest
-from polars import Expr
 
 from polar_express.core.polar_mapper import PolarMapper
 

@@ -1,9 +1,9 @@
 """PolarMapper class for building ETL pipelines with polars DataFrames."""
 
 import json
-from typing import Dict, List, Optional, TextIO, Union, Any, cast
+from typing import Any, Dict, List, Optional, TextIO, cast
 
-from polars import Expr, DataFrame
+from polars import DataFrame, Expr
 
 
 class PolarMapper:

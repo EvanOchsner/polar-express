@@ -1,7 +1,6 @@
 """Tests for token utilities in polar_express.utils.tokens."""
 
-import pytest
-from polar_express.utils.tokens import tokenize_path, handle_predicate_token
+from polar_express.utils.tokens import handle_predicate_token, tokenize_path
 
 
 class TestTokenizePath:
@@ -72,10 +71,10 @@ class TestTokenizePath:
         path = "departments[*].employees[*].name"
         tokens = tokenize_path(path)
         assert tokens == [
-            ("field", "departments"), 
-            ("wildcard", None), 
-            ("field", "employees"), 
-            ("wildcard", None), 
+            ("field", "departments"),
+            ("wildcard", None),
+            ("field", "employees"),
+            ("wildcard", None),
             ("field", "name")
         ]
 
@@ -125,7 +124,10 @@ class TestTokenizePath:
         assert set(tokens[1][1]["fields"]) == {"age", "premium"}
 
     def test_complex_predicate_with_nested_conditions(self):
-        """Test complex predicate with nested conditions like 'users[?(@.age>30 && (@.premium==true || @.subscribed>6))]'."""
+        """
+        Test complex predicate with nested conditions like
+        'users[?(@.age>30 && (@.premium==true || @.subscribed>6))]'.
+        """
         path = "users[?(@.age>30 && (@.premium==true || @.subscribed>6))]"
         tokens = tokenize_path(path)
         assert len(tokens) == 2

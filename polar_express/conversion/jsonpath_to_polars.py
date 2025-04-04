@@ -1,7 +1,6 @@
 """Main conversion function for JSONPath to Polars."""
 
-import re
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
+from typing import Any, List, Optional, Tuple
 
 import polars as pl
 from polars import Expr

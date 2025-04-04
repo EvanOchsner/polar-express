@@ -1,6 +1,8 @@
 """Token handling utilities for JSONPath parsing."""
 
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from polar_express.parsing import predicate_parser
 
 # Type for tokens produced during parsing
 Token = Tuple[str, Optional[Union[str, int, Dict[str, Any]]]]
@@ -16,8 +18,6 @@ def tokenize_path(path: str) -> List[Token]:
     Returns:
         A list of tokens representing the path components.
     """
-    import re
-    from polar_express.parsing import predicate_parser
 
     tokens: List[Token] = []
     current = ""
@@ -94,7 +94,6 @@ def handle_predicate_token(path: str, start_idx: int) -> Token:
     Returns:
         A predicate token.
     """
-    from polar_express.parsing import predicate_parser
 
     # Find the end of the predicate expression
     i = start_idx + 1  # Skip the '?' character

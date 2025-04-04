@@ -5,6 +5,7 @@ This example demonstrates simple JSONPath extraction from JSON data stored in a 
 """
 
 import polars as pl
+
 from polar_express import JSONPathExpr, jsonpath_to_polars
 
 # Create a DataFrame with JSON data in string columns

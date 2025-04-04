@@ -1,6 +1,5 @@
 """Handlers for field access in JSONPath expressions."""
 
-import re
 from typing import Optional
 
 import polars as pl
