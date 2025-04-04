@@ -280,7 +280,7 @@ def handle_multiple_array_patterns(path: str) -> Optional[Expr]:
         root_field = path_before[:bracket_pos]
 
         # Extract everything after the indexed array bracket
-        rest_path = path_before[bracket_pos + len(index_match.group(0)) :]
+        rest_path = path_before[bracket_pos + len(index_match.group(0)):]
         if rest_path.startswith("."):
             rest_path = rest_path[1:]  # Remove leading dot
 
@@ -350,7 +350,7 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
     predicate_fields = predicate_parser.extract_fields_from_predicate(predicate_str)
     return_field = None
     if predicate_end + 2 < len(rest) and rest[predicate_end + 2] == ".":
-        return_field = rest[predicate_end + 3 :]
+        return_field = rest[predicate_end + 3:]
 
     # Build a dtype for the encoded list we are filtering
     struct_fields = predicate_fields
