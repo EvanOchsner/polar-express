@@ -117,3 +117,31 @@ def handle_predicate_token(path: str, start_idx: int) -> Token:
     fields = predicate_parser.extract_fields_from_predicate(predicate_str)
     pred_expr = predicate_parser.convert_to_polars(predicate_str)
     return ("predicate", {"expr": pred_expr, "fields": fields})
+
+
+def tokens_to_jsonpath(tokens: List[Token]) -> str:
+    """
+    Convert a list of tokens back to a JSONPath string.
+
+    Args:
+        tokens: The list of tokens to convert.
+
+    Returns:
+        A JSONPath string representation of the tokens.
+    """
+    path = "$"
+    for token_type, token_value in tokens:
+        if token_type == "field":
+            path += f".{token_value}"
+        elif token_type == "index":
+            path += f"[{token_value}]"
+        elif token_type == "wildcard":
+            path += "[*]"
+        elif token_type == "index_expr":
+            path += f"[{token_value}]"
+        elif token_type == "predicate":
+            if isinstance(token_value, dict) and "expr" in token_value:
+                # For simplicity, use the raw predicate string if available
+                # Otherwise would need to reconstruct from the parsed expression
+                path += f"[?({token_value['expr']})]"
+    return path

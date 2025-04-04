@@ -6,6 +6,8 @@ from typing import List, Optional
 import polars as pl
 from polars import Expr
 
+from polar_express.utils.tokens import tokenize_path, tokens_to_jsonpath
+
 
 def handle_multiple_array_indices(path: str) -> Optional[Expr]:
     """
@@ -150,6 +152,12 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
     """
     Handle array wildcard access patterns like $.foo.bar[*].baz,
     gracefully handling empty lists.
+
+    Args:
+        path: The JSONPath without the leading '$.' prefix.
+
+    Returns:
+        A polars Expression if the path matches this pattern, None otherwise.
     """
     if "[*]" not in path:
         return None
@@ -159,29 +167,38 @@ def handle_array_wildcard_access(path: str) -> Optional[Expr]:
     field_path = parts[0]  # e.g., "foo.bar"
     rest_path = parts[1] if len(parts) > 1 else ""  # e.g., ".baz"
 
-    # Split field path into components
-    field_parts = field_path.split(".")
-    root = field_parts[0]  # The root column name
+    # Parse the field path before wildcard into tokens
+    tokens = tokenize_path(field_path)
+
+    # Extract the root column name from the first token
+    if not tokens:
+        return None
+
+    root = ""
+    if tokens[0][0] == "field":
+        root = str(tokens[0][1])
+    else:
+        return None  # First token must be a field name
+
+    # Determine base expression based on token count
+    if len(tokens) == 1:
+        # Direct array access on root column (e.g., "users[*]")
+        base_expr = pl.col(root)
+    else:
+        # Complex path before wildcard (e.g., "users.profiles[0].data[*]")
+        # Convert tokens to a proper JSONPath string (excluding the root field)
+        rest_tokens = tokens[1:]
+        if rest_tokens:
+            # Create a JSONPath string from the tokens after the root
+            json_path = tokens_to_jsonpath(rest_tokens)
+            # Use the json_path as is, keeping the "$" prefix
+            base_expr = pl.col(root).str.json_path_match(json_path)
+        else:
+            base_expr = pl.col(root)
 
     if rest_path == "":  # No trailing field, decode whole struct elements inside list
-        if len(field_parts) > 1:
-            # Nested field before wildcard, e.g., "foo.bar"
-            nested_path = ".".join(field_parts[1:])
-            base_expr = pl.col(root).str.json_path_match(f"$.{nested_path}")
-        else:
-            # Direct array access on root column
-            base_expr = pl.col(root)
         decoded_expr = base_expr.str.json_decode(infer_schema_length=None)
-
     else:  # Only decode the trailing field portion of each element inside list
-        if len(field_parts) > 1:
-            # Nested field before wildcard, e.g., "foo.bar"
-            nested_path = ".".join(field_parts[1:])
-            base_expr = pl.col(root).str.json_path_match(f"$.{nested_path}")
-        else:
-            # Direct array access on root column
-            base_expr = pl.col(root)
-
         rest_path_clean = rest_path.lstrip(".")  # Remove leading dot if present
         nested_parts = rest_path_clean.split(".")
 
