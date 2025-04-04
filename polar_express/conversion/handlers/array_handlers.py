@@ -50,9 +50,7 @@ def handle_direct_array_access(root: str, index: str, rest: str) -> Expr:
         return pl.col(root).str.json_path_match(f"$[{index}]")
 
 
-def handle_nested_array_access(
-    root: str, parts: List[str], index: str, rest: str
-) -> Expr:
+def handle_nested_array_access(root: str, parts: List[str], index: str, rest: str) -> Expr:
     """
     Handle nested array access like $.user_data.accounts[0].
 
@@ -81,9 +79,7 @@ def handle_nested_array_access(
         return pl.col(root).str.json_path_match(f"$.{nested}[{index}]")
 
 
-def handle_double_array_index(
-    field_path: str, first_index: str, rest: str
-) -> Optional[Expr]:
+def handle_double_array_index(field_path: str, first_index: str, rest: str) -> Optional[Expr]:
     """
     Handle double array index pattern like $.matrix[0][1].
 
@@ -104,17 +100,13 @@ def handle_double_array_index(
     # Build the JSON path with both indices
     if field_path.count(".") == 0:
         # For the root element
-        return pl.col(field_path).str.json_path_match(
-            f"$[{first_index}][{second_index}]{remaining}"
-        )
+        return pl.col(field_path).str.json_path_match(f"$[{first_index}][{second_index}]{remaining}")
     else:
         # For nested elements
         parts = field_path.split(".")
         root = parts[0]
         nested = ".".join(parts[1:])
-        return pl.col(root).str.json_path_match(
-            f"$.{nested}[{first_index}][{second_index}]{remaining}"
-        )
+        return pl.col(root).str.json_path_match(f"$.{nested}[{first_index}][{second_index}]{remaining}")
 
 
 def handle_array_access(path: str) -> Optional[Expr]:
@@ -227,9 +219,7 @@ def has_multiple_array_patterns(path: str) -> bool:
     predicate_count = path.count("[?(")
 
     # If we have multiple wildcards or predicates, or both a wildcard and predicate
-    return (wildcard_count + predicate_count) > 1 or (
-        wildcard_count >= 1 and predicate_count >= 1
-    )
+    return (wildcard_count + predicate_count) > 1 or (wildcard_count >= 1 and predicate_count >= 1)
 
 
 def handle_multiple_array_patterns(path: str) -> Optional[Expr]:
@@ -287,9 +277,7 @@ def handle_multiple_array_patterns(path: str) -> Optional[Expr]:
             # For example: pl.col("education_data").str.json_path_match("$.schools[0].classes").cast(pl.Utf8)
             return (
                 pl.col(column_name)
-                .str.json_path_match(
-                    f"$.{nested_path}[{index_match.group(1)}]{rest_path and f'.{rest_path}' or ''}"
-                )
+                .str.json_path_match(f"$.{nested_path}[{index_match.group(1)}]{rest_path and f'.{rest_path}' or ''}")
                 .cast(pl.Utf8)
             )
         else:
@@ -297,9 +285,7 @@ def handle_multiple_array_patterns(path: str) -> Optional[Expr]:
             # For example: pl.col("schools").str.json_path_match("$[0].classes").cast(pl.Utf8)
             return (
                 pl.col(root_field)
-                .str.json_path_match(
-                    f"$[{index_match.group(1)}]{rest_path and f'.{rest_path}' or ''}"
-                )
+                .str.json_path_match(f"$[{index_match.group(1)}]{rest_path and f'.{rest_path}' or ''}")
                 .cast(pl.Utf8)
             )
 
@@ -332,7 +318,7 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
         A polars Expression if the path matches this pattern, None otherwise.
     """
     from polar_express.parsing import predicate_parser
-    
+
     if "[?(" not in path or ")]" not in path:
         return None
 
@@ -349,7 +335,7 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
     if predicate_end + 2 < len(rest) and rest[predicate_end + 2] == ".":
         return_field = rest[predicate_end + 3 :]
 
-   # Build a dtype for the encoded list we are filtering
+    # Build a dtype for the encoded list we are filtering
     struct_fields = predicate_fields
     if return_field:
         struct_fields.append(return_field)

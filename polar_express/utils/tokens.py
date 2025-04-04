@@ -18,7 +18,7 @@ def tokenize_path(path: str) -> List[Token]:
     """
     import re
     from polar_express.parsing import predicate_parser
-    
+
     tokens: List[Token] = []
     current = ""
     i = 0
@@ -95,7 +95,7 @@ def handle_predicate_token(path: str, start_idx: int) -> Token:
         A predicate token.
     """
     from polar_express.parsing import predicate_parser
-    
+
     # Find the end of the predicate expression
     i = start_idx + 1  # Skip the '?' character
     predicate_str = ""

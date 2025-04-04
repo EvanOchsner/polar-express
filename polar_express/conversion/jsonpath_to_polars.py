@@ -15,7 +15,7 @@ from polar_express.conversion.handlers.array_handlers import (
 )
 from polar_express.conversion.handlers.field_handlers import handle_simple_field_access
 from polar_express.parsing.path_parser import (
-    process_tokens, 
+    process_tokens,
     validate_jsonpath,
 )
 from polar_express.utils.tokens import tokenize_path
@@ -91,9 +91,7 @@ def parse_predicate_expression(
 
         # Extract the field name
         field_start = pos
-        while pos < len(predicate_str) and (
-            predicate_str[pos].isalnum() or predicate_str[pos] == "_"
-        ):
+        while pos < len(predicate_str) and (predicate_str[pos].isalnum() or predicate_str[pos] == "_"):
             pos += 1
         field = predicate_str[field_start:pos]
 
@@ -134,18 +132,14 @@ def parse_predicate_expression(
                 pos += 5
             else:
                 # Parse as numeric
-                while pos < len(predicate_str) and (
-                    predicate_str[pos].isdigit() or predicate_str[pos] == "."
-                ):
+                while pos < len(predicate_str) and (predicate_str[pos].isdigit() or predicate_str[pos] == "."):
                     pos += 1
                 value_str = predicate_str[value_start:pos]
                 if value_str:  # Make sure we have a non-empty string
                     # Convert the value to numeric type
                     value = float(value_str) if "." in value_str else int(value_str)
                 else:
-                    raise ValueError(
-                        f"Invalid value at position {pos} in predicate: {predicate_str}"
-                    )
+                    raise ValueError(f"Invalid value at position {pos} in predicate: {predicate_str}")
 
         # Skip whitespace after value
         while pos < len(predicate_str) and predicate_str[pos].isspace():

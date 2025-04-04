@@ -82,21 +82,27 @@ class TestJsonPathToPolars:
 
     def test_array_with_complex_predicate(self):
         """Test array with complex predicate using AND and OR operators."""
-        result = jsonpath_to_polars(
-            "$.products[?(@.price>10 && @.stock>0 || @.featured==true)].name"
-        )
+        result = jsonpath_to_polars("$.products[?(@.price>10 && @.stock>0 || @.featured==true)].name")
 
         # Create the expected expression with empty list handling
         expected = (
             pl.when(pl.col("products").eq("[]").or_(pl.col("products").is_null()))
             .then(pl.lit(None))
             .otherwise(
-                pl.col("products").str.json_decode(pl.List(pl.Struct([
-                    pl.Field("price", pl.Utf8),
-                    pl.Field("stock", pl.Utf8),
-                    pl.Field("featured", pl.Utf8),
-                    pl.Field("name", pl.Utf8)
-                ]))).list.eval(
+                pl.col("products")
+                .str.json_decode(
+                    pl.List(
+                        pl.Struct(
+                            [
+                                pl.Field("price", pl.Utf8),
+                                pl.Field("stock", pl.Utf8),
+                                pl.Field("featured", pl.Utf8),
+                                pl.Field("name", pl.Utf8),
+                            ]
+                        )
+                    )
+                )
+                .list.eval(
                     pl.when(
                         pl.element().struct.field("price").cast(pl.Float32).gt(float(10))
                         & pl.element().struct.field("stock").cast(pl.Float32).gt(float(0))
@@ -162,7 +168,7 @@ class TestJsonPathToPolars:
         )
         # TODO: Understand why meta.eq does not agree here
         assert result.meta.tree_format(return_as_string=True) == expected.meta.tree_format(return_as_string=True)
-         # assert result.meta.eq(expected)
+        # assert result.meta.eq(expected)
 
     def test_multiple_arrays_with_wildcards(self):
         """Test path with multiple array wildcards."""

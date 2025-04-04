@@ -160,9 +160,7 @@ class PolarMapper:
                 return None
             return description
 
-        description = (
-            "This mapper performs the following operations on the input DataFrame:\n\n"
-        )
+        description = "This mapper performs the following operations on the input DataFrame:\n\n"
 
         for i, step in enumerate(self.steps, 1):
             step_type = step["type"]

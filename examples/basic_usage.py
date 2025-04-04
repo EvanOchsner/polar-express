@@ -8,21 +8,15 @@ import polars as pl
 from polar_express import JSONPathExpr, jsonpath_to_polars
 
 # Create a DataFrame with JSON data in string columns
-df = pl.DataFrame({
-    "user_data": ['{"name": "Alice", "address": {"city": "New York"}}']
-})
+df = pl.DataFrame({"user_data": ['{"name": "Alice", "address": {"city": "New York"}}']})
 
 # Method 1: Using jsonpath_to_polars function directly
 city_expr = jsonpath_to_polars("$.user_data.address.city")
-result1 = df.with_columns([
-    city_expr.alias("city")
-])
+result1 = df.with_columns([city_expr.alias("city")])
 
 # Method 2: Using JSONPathExpr class for better reusability
 city_path = JSONPathExpr("$.user_data.address.city", alias="city")
-result2 = df.with_columns([
-    city_path.expr
-])
+result2 = df.with_columns([city_path.expr])
 
 print("Using direct function:")
 print(result1)

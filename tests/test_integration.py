@@ -219,9 +219,7 @@ class TestJsonPathIntegration:
         df = pl.DataFrame({"products": products_json})
 
         # Test with AND condition - items where foo=X AND bar=Y
-        expr_and = jsonpath_to_polars(
-            '$.products.list_col[?(@.foo == "X" && @.bar == "Y")].id'
-        )
+        expr_and = jsonpath_to_polars('$.products.list_col[?(@.foo == "X" && @.bar == "Y")].id')
         print(str(expr_and))
         result_and = df.with_columns([expr_and.alias("and_results")])
 
@@ -254,9 +252,7 @@ class TestJsonPathIntegration:
         name_expr = jsonpath_to_polars("$.user_data.name")
         city_expr = jsonpath_to_polars("$.user_data.address.city")
 
-        result = sample_df.with_columns(
-            [name_expr.alias("name"), city_expr.alias("city")]
-        )
+        result = sample_df.with_columns([name_expr.alias("name"), city_expr.alias("city")])
 
         # Check the extracted data including the 4th record
         assert result.select("name").to_series().to_list() == [
@@ -368,9 +364,7 @@ class TestJsonPathIntegration:
                     ]
                 }
             ),
-            json.dumps(
-                {"users": [{"contact": {"address": {"city": "Austin", "state": "TX"}}}]}
-            ),
+            json.dumps({"users": [{"contact": {"address": {"city": "Austin", "state": "TX"}}}]}),
         ]
 
         # Create a new DataFrame
@@ -450,17 +444,9 @@ class TestJsonPathIntegration:
         # Check that the extracted data contains the expected names
         names = result.select("employee_names").to_series().to_list()
         assert len(names) == 3
-        assert (
-            "John" in str(names[0])
-            and "Lisa" in str(names[0])
-            and "Steve" in str(names[0])
-        )
+        assert "John" in str(names[0]) and "Lisa" in str(names[0]) and "Steve" in str(names[0])
         assert "Mark" in str(names[1]) and "Sarah" in str(names[1])
-        assert (
-            "Emily" in str(names[2])
-            and "Tom" in str(names[2])
-            and "Jessica" in str(names[2])
-        )
+        assert "Emily" in str(names[2]) and "Tom" in str(names[2]) and "Jessica" in str(names[2])
 
     def test_array_index_with_nested_arrays(self, sample_df):
         """Test array index access with nested arrays."""
@@ -552,9 +538,7 @@ class TestJsonPathIntegration:
         df_with_schools = pl.DataFrame({"education_data": json_with_schools})
 
         # Extract all grades from all students in the first school's classes
-        expr = jsonpath_to_polars(
-            "$.education_data.schools[0].classes[*].students[*].grade"
-        )
+        expr = jsonpath_to_polars("$.education_data.schools[0].classes[*].students[*].grade")
         result = df_with_schools.with_columns(
             [expr.alias("grades")]
         )  # Check that the extracted data contains the expected grades
@@ -562,20 +546,10 @@ class TestJsonPathIntegration:
         assert len(grades) == 3
 
         # First row should contain grades from High School (first school)
-        assert (
-            "A" in str(grades[0])
-            and "B" in str(grades[0])
-            and "A-" in str(grades[0])
-            and "B+" in str(grades[0])
-        )
+        assert "A" in str(grades[0]) and "B" in str(grades[0]) and "A-" in str(grades[0]) and "B+" in str(grades[0])
 
         # Second row should contain grades from Elementary School (first school)
         assert "A+" in str(grades[1]) and "A" in str(grades[1])
 
         # Third row should contain grades from College (first school)
-        assert (
-            "B+" in str(grades[2])
-            and "A" in str(grades[2])
-            and "B" in str(grades[2])
-            and "A-" in str(grades[2])
-        )
+        assert "B+" in str(grades[2]) and "A" in str(grades[2]) and "B" in str(grades[2]) and "A-" in str(grades[2])

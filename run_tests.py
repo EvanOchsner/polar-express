@@ -9,9 +9,7 @@ import sys
 
 def main():
     """Run tests for the JSONPath to Polars converter."""
-    parser = argparse.ArgumentParser(
-        description="Run tests for JSONPath to Polars converter"
-    )
+    parser = argparse.ArgumentParser(description="Run tests for JSONPath to Polars converter")
     parser.add_argument(
         "--integration",
         action="store_true",
@@ -49,12 +47,8 @@ def main():
             cmd.append(args.test)
         else:
             # Try to find the test in either test file
-            cmd.append(
-                f"tests/test_jsonpath_conversion.py::TestJsonPathToPolars::{args.test}"
-            )
-            cmd.append(
-                f"tests/test_integration.py::TestJsonPathIntegration::{args.test}"
-            )
+            cmd.append(f"tests/test_jsonpath_conversion.py::TestJsonPathToPolars::{args.test}")
+            cmd.append(f"tests/test_integration.py::TestJsonPathIntegration::{args.test}")
 
     print(f"Running command: {' '.join(cmd)}")
     return subprocess.call(cmd)

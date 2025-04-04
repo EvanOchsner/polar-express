@@ -28,7 +28,9 @@ def validate_jsonpath(jsonpath: str) -> str:
         raise ValueError(f"Invalid JSONPath format: {jsonpath}")
 
 
-def build_nested_schema(tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, Any]]]]], start_idx: int) -> Tuple[pl.DataType, int]:
+def build_nested_schema(
+    tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, Any]]]]], start_idx: int
+) -> Tuple[pl.DataType, int]:
     """
     Build a nested schema for complex JSON paths with multiple array wildcards.
 
@@ -116,7 +118,9 @@ def process_field_token(
             return expr.struct.field(field_name)  # type: ignore
 
 
-def process_wildcard_token(expr: Expr, tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, Any]]]]], idx: int) -> Expr:
+def process_wildcard_token(
+    expr: Expr, tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, Any]]]]], idx: int
+) -> Expr:
     """
     Process a wildcard token and update the expression.
 
@@ -151,9 +155,7 @@ def process_wildcard_token(expr: Expr, tokens: List[Tuple[str, Optional[Union[st
                     field_structs.append(pl.Field(field_name, current_type))
                 else:
                     # Wrap the previous structure
-                    field_structs.append(
-                        pl.Field(field_name, pl.Struct([field_structs[-1]]))
-                    )
+                    field_structs.append(pl.Field(field_name, pl.Struct([field_structs[-1]])))
 
             # The last item contains our complete structure
             # First check if the array is empty before trying to decode
@@ -273,11 +275,7 @@ def process_tokens(tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, An
             # Handle indexed array access
             # If it's a numbered index followed by more complex path elements,
             # use json_path_match for the whole path
-            if (
-                i > 0
-                and i + 1 < len(tokens)
-                and (tokens[i + 1][0] == "wildcard" or tokens[i + 1][0] == "index")
-            ):
+            if i > 0 and i + 1 < len(tokens) and (tokens[i + 1][0] == "wildcard" or tokens[i + 1][0] == "index"):
                 # We have a complex path with multiple array accesses
                 root_token = tokens[0]
                 if root_token[0] == "field":

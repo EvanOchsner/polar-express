@@ -186,9 +186,7 @@ def handle_array_access(path: str) -> Optional[Expr]:
         return handle_direct_array_access(root, index, rest)
 
 
-def handle_double_array_index(
-    field_path: str, first_index: str, rest: str
-) -> Optional[Expr]:
+def handle_double_array_index(field_path: str, first_index: str, rest: str) -> Optional[Expr]:
     """
     Handle double array index pattern like $.matrix[0][1].
 
@@ -209,22 +207,16 @@ def handle_double_array_index(
     # Build the JSON path with both indices
     if field_path.count(".") == 0:
         # For the root element
-        return pl.col(field_path).str.json_path_match(
-            f"$[{first_index}][{second_index}]{remaining}"
-        )
+        return pl.col(field_path).str.json_path_match(f"$[{first_index}][{second_index}]{remaining}")
     else:
         # For nested elements
         parts = field_path.split(".")
         root = parts[0]
         nested = ".".join(parts[1:])
-        return pl.col(root).str.json_path_match(
-            f"$.{nested}[{first_index}][{second_index}]{remaining}"
-        )
+        return pl.col(root).str.json_path_match(f"$.{nested}[{first_index}][{second_index}]{remaining}")
 
 
-def handle_nested_array_access(
-    root: str, parts: List[str], index: str, rest: str
-) -> Expr:
+def handle_nested_array_access(root: str, parts: List[str], index: str, rest: str) -> Expr:
     """
     Handle nested array access like $.user_data.accounts[0].
 
@@ -316,9 +308,7 @@ def parse_predicate_expression(
 
         # Extract the field name
         field_start = pos
-        while pos < len(predicate_str) and (
-            predicate_str[pos].isalnum() or predicate_str[pos] == "_"
-        ):
+        while pos < len(predicate_str) and (predicate_str[pos].isalnum() or predicate_str[pos] == "_"):
             pos += 1
         field = predicate_str[field_start:pos]
 
@@ -359,18 +349,14 @@ def parse_predicate_expression(
                 pos += 5
             else:
                 # Parse as numeric
-                while pos < len(predicate_str) and (
-                    predicate_str[pos].isdigit() or predicate_str[pos] == "."
-                ):
+                while pos < len(predicate_str) and (predicate_str[pos].isdigit() or predicate_str[pos] == "."):
                     pos += 1
                 value_str = predicate_str[value_start:pos]
                 if value_str:  # Make sure we have a non-empty string
                     # Convert the value to numeric type
                     value = float(value_str) if "." in value_str else int(value_str)
                 else:
-                    raise ValueError(
-                        f"Invalid value at position {pos} in predicate: {predicate_str}"
-                    )
+                    raise ValueError(f"Invalid value at position {pos} in predicate: {predicate_str}")
 
         # Skip whitespace after value
         while pos < len(predicate_str) and predicate_str[pos].isspace():
@@ -422,7 +408,7 @@ def handle_array_with_predicate(path: str) -> Optional[Expr]:
     if predicate_end + 2 < len(rest) and rest[predicate_end + 2] == ".":
         return_field = rest[predicate_end + 3 :]
 
-   # Build a dtype for the encoded list we are filtering
+    # Build a dtype for the encoded list we are filtering
     struct_fields = predicate_fields
     if return_field:
         struct_fields.append(return_field)
@@ -658,11 +644,7 @@ def process_tokens(tokens: List[Token]) -> Expr:
             # Handle indexed array access
             # If it's a numbered index followed by more complex path elements,
             # use json_path_match for the whole path
-            if (
-                i > 0
-                and i + 1 < len(tokens)
-                and (tokens[i + 1][0] == "wildcard" or tokens[i + 1][0] == "index")
-            ):
+            if i > 0 and i + 1 < len(tokens) and (tokens[i + 1][0] == "wildcard" or tokens[i + 1][0] == "index"):
                 # We have a complex path with multiple array accesses
                 root_token = tokens[0]
                 if root_token[0] == "field":
@@ -714,9 +696,7 @@ def process_tokens(tokens: List[Token]) -> Expr:
     return expr
 
 
-def process_field_token(
-    expr: Expr, tokens: List[Token], idx: int, token_value: Any
-) -> Expr:
+def process_field_token(expr: Expr, tokens: List[Token], idx: int, token_value: Any) -> Expr:
     """
     Process a field token and update the expression.
 
@@ -782,9 +762,7 @@ def process_wildcard_token(expr: Expr, tokens: List[Token], idx: int) -> Expr:
                     field_structs.append(pl.Field(field_name, current_type))
                 else:
                     # Wrap the previous structure
-                    field_structs.append(
-                        pl.Field(field_name, pl.Struct([field_structs[-1]]))
-                    )
+                    field_structs.append(pl.Field(field_name, pl.Struct([field_structs[-1]])))
 
             # The last item contains our complete structure
             # First check if the array is empty before trying to decode
@@ -936,9 +914,7 @@ def has_multiple_array_patterns(path: str) -> bool:
     predicate_count = path.count("[?(")
 
     # If we have multiple wildcards or predicates, or both a wildcard and predicate
-    return (wildcard_count + predicate_count) > 1 or (
-        wildcard_count >= 1 and predicate_count >= 1
-    )
+    return (wildcard_count + predicate_count) > 1 or (wildcard_count >= 1 and predicate_count >= 1)
 
 
 def handle_multiple_array_patterns(path: str) -> Optional[Expr]:
@@ -996,9 +972,7 @@ def handle_multiple_array_patterns(path: str) -> Optional[Expr]:
             # For example: pl.col("education_data").str.json_path_match("$.schools[0].classes").cast(pl.Utf8)
             return (
                 pl.col(column_name)
-                .str.json_path_match(
-                    f"$.{nested_path}[{index_match.group(1)}]{rest_path and f'.{rest_path}' or ''}"
-                )
+                .str.json_path_match(f"$.{nested_path}[{index_match.group(1)}]{rest_path and f'.{rest_path}' or ''}")
                 .cast(pl.Utf8)
             )
         else:
@@ -1006,9 +980,7 @@ def handle_multiple_array_patterns(path: str) -> Optional[Expr]:
             # For example: pl.col("schools").str.json_path_match("$[0].classes").cast(pl.Utf8)
             return (
                 pl.col(root_field)
-                .str.json_path_match(
-                    f"$[{index_match.group(1)}]{rest_path and f'.{rest_path}' or ''}"
-                )
+                .str.json_path_match(f"$[{index_match.group(1)}]{rest_path and f'.{rest_path}' or ''}")
                 .cast(pl.Utf8)
             )
 

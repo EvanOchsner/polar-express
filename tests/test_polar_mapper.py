@@ -70,9 +70,7 @@ class TestPolarMapper:
     def test_map_function(self):
         """Test the map function applies steps in the correct order."""
         # Create a test DataFrame
-        df = pl.DataFrame(
-            {"a": [1, 2, 3, 4], "b": [10, 20, 30, 40], "c": [100, 200, 300, 400]}
-        )
+        df = pl.DataFrame({"a": [1, 2, 3, 4], "b": [10, 20, 30, 40], "c": [100, 200, 300, 400]})
 
         # Create mapper with a pipeline
         mapper = PolarMapper()
@@ -91,14 +89,10 @@ class TestPolarMapper:
     def test_to_string(self):
         """Test the to_string method."""
         mapper = PolarMapper()
-        mapper.add_select_step([pl.col("a"), pl.col("b")]).add_filter_step(
-            pl.col("a") > 10
-        )
+        mapper.add_select_step([pl.col("a"), pl.col("b")]).add_filter_step(pl.col("a") > 10)
 
         expected = (
-            "PolarMapper with steps:\n"
-            '1. SELECT: col("a"), col("b")\n'
-            '2. FILTER: [(col("a")) > (dyn int: 10)]\n'
+            "PolarMapper with steps:\n" '1. SELECT: col("a"), col("b")\n' '2. FILTER: [(col("a")) > (dyn int: 10)]\n'
         )
         assert mapper.to_string() == expected
 
@@ -172,9 +166,7 @@ class TestPolarMapper:
         mapper = PolarMapper()
 
         description = mapper.describe()
-        assert (
-            "This mapper performs no operations on the input DataFrame." == description
-        )
+        assert "This mapper performs no operations on the input DataFrame." == description
 
 
 if __name__ == "__main__":
