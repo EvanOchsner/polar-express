@@ -1,12 +1,11 @@
 import json
 import os
-import sys
 import tempfile
 
 import polars as pl
 import pytest
 
-from jsonpath_to_polars import jsonpath_to_polars
+from polar_express.conversion.jsonpath_to_polars import jsonpath_to_polars
 
 
 def create_test_dataframe() -> pl.DataFrame:

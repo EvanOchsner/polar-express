@@ -1,13 +1,7 @@
-import os
-import sys
-
-# Add parent directory to sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import polars as pl
 import pytest
 
-from jsonpath_to_polars import (
+from polar_express.conversion.jsonpath_to_polars import (
     comparison_to_expr,
     jsonpath_to_polars,
 )

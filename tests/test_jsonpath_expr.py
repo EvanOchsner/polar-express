@@ -3,7 +3,7 @@
 import polars as pl
 import pytest
 
-from jsonpath_expr import JSONPathExpr
+from polar_express.core.jsonpath_expr import JSONPathExpr
 
 
 class TestJSONPathExpr:

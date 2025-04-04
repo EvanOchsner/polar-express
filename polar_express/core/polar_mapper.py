@@ -1,7 +1,7 @@
 """PolarMapper class for building ETL pipelines with polars DataFrames."""
 
 import json
-from typing import Dict, List, Optional, TextIO, Union
+from typing import Dict, List, Optional, TextIO, Union, Any, cast
 
 from polars import Expr, DataFrame
 
@@ -12,9 +12,9 @@ class PolarMapper:
     Each step is a polars operation with associated expressions.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize an empty PolarMapper with no computation steps."""
-        self.steps: List[Dict[str, Union[str, List[Expr], Expr]]] = []
+        self.steps: List[Dict[str, Any]] = []
 
     def add_select_step(self, exprs: List[Expr]) -> "PolarMapper":
         """
@@ -94,10 +94,10 @@ class PolarMapper:
             step_type = step["type"]
 
             if step_type == "select":
-                exprs = [str(expr) for expr in step["exprs"]]
+                exprs = [str(expr) for expr in cast(List[Expr], step["exprs"])]
                 result += f"{i}. SELECT: {', '.join(exprs)}\n"
             elif step_type == "with_columns":
-                exprs = [str(expr) for expr in step["exprs"]]
+                exprs = [str(expr) for expr in cast(List[Expr], step["exprs"])]
                 result += f"{i}. WITH_COLUMNS: {', '.join(exprs)}\n"
             elif step_type == "filter":
                 result += f"{i}. FILTER: {step['expr']}\n"
@@ -135,7 +135,7 @@ class PolarMapper:
             serialized_step = {"type": step["type"]}
 
             if step["type"] in ["select", "with_columns"]:
-                serialized_step["exprs"] = [str(expr) for expr in step["exprs"]]
+                serialized_step["exprs"] = [str(expr) for expr in cast(List[Expr], step["exprs"])]
             elif step["type"] == "filter":
                 serialized_step["expr"] = str(step["expr"])
 
@@ -168,11 +168,11 @@ class PolarMapper:
             step_type = step["type"]
 
             if step_type == "select":
-                exprs = [str(expr) for expr in step["exprs"]]
+                exprs = [str(expr) for expr in cast(List[Expr], step["exprs"])]
                 expr_str = ", ".join(exprs)
                 description += f"Step {i}: Select columns {expr_str}\n"
             elif step_type == "with_columns":
-                exprs = [str(expr) for expr in step["exprs"]]
+                exprs = [str(expr) for expr in cast(List[Expr], step["exprs"])]
                 expr_str = ", ".join(exprs)
                 description += f"Step {i}: Add columns {expr_str}\n"
             elif step_type == "filter":

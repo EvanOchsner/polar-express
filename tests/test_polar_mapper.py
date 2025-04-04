@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 from polars import Expr
 
-from polar_mapper import PolarMapper
+from polar_express.core.polar_mapper import PolarMapper
 
 
 class TestPolarMapper:
