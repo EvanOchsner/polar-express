@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union, cast
 import polars as pl
 from polars import Expr
 
+from polar_express.parsing import predicate_parser
+
 
 def validate_jsonpath(jsonpath: str) -> str:
     """
@@ -200,8 +202,6 @@ def process_predicate_token(
     Returns:
         The updated polars Expression.
     """
-    from polar_express.conversion.jsonpath_to_polars import simple_predicate_to_expr
-
     # Handle predicate expressions for filtering arrays
     pred_info = cast(Dict[str, Any], token_value)
     pred_expr = pred_info["expr"]
@@ -220,19 +220,23 @@ def process_predicate_token(
         # Regular predicate after a field or index
         expr = expr.str.json_decode(pl.List(pl.Struct(struct_fields)))
 
+        # Convert predicate to a polars expression
+        pred_polars_expr = predicate_parser.convert_to_polars(pred_expr)
+
         # Now apply the filter
         # Look ahead to see what to return
         if idx + 1 < len(tokens) and tokens[idx + 1][0] == "field":
             next_field = cast(str, tokens[idx + 1][1])
             return_expr = pl.col(next_field)
-            expr = simple_predicate_to_expr(pred_expr, return_expr)
+            # Apply the filter and return the specified field
+            expr = pl.when(pred_polars_expr).then(return_expr).otherwise(pl.lit(None))
             # Ensure we preserve the parent context in the expression
             if parent_field:
                 expr = expr.alias(f"{parent_field}_filtered")
             return expr
         else:
             # Return the whole matching objects
-            return simple_predicate_to_expr(pred_expr, expr)
+            return pl.when(pred_polars_expr).then(expr).otherwise(pl.lit(None))
 
     return expr
 
@@ -240,6 +244,12 @@ def process_predicate_token(
 def process_tokens(tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, Any]]]]]) -> Expr:
     """
     Process a list of tokens to build a polars expression.
+
+    Always uses the first token for the column name. After that, chains tokens together into
+    a path to be traversed via `base_expr.str.json_path_match(reconstructed_path)`. Whenever
+    an array wildcard or predicate is encountered, stops the `json_path_match` traversal,
+    determines the datatype of the list elements, then uses `expr.str.json_decode(list_schema)`
+    to handle the array wildcard or predicate.
 
     Args:
         tokens: The list of tokens to process.
@@ -253,74 +263,123 @@ def process_tokens(tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, An
     if not tokens:
         return pl.lit(None)  # Empty path case
 
-    # Start with the root element
+    # Start with the root element (always use the first token as column name)
     first_token = tokens[0]
     if first_token[0] == "field":
-        expr = pl.col(cast(str, first_token[1]))
+        base_expr = pl.col(cast(str, first_token[1]))
     else:
         # Handle unusual case where path starts with an array accessor
         raise ValueError("JSONPath must start with a field name after '$.'")
 
-    # Process the remaining tokens to build the chained expression
-    i = 1
-    while i < len(tokens):
-        token = tokens[i]
-        token_type = token[0]
-        token_value = token[1]
+    # If we only have one token, return the base expression
+    if len(tokens) == 1:
+        return base_expr
 
-        if token_type == "field":
-            expr = process_field_token(expr, tokens, i, token_value)
-        elif token_type == "index":
-            # Handle indexed array access
-            # If it's a numbered index followed by more complex path elements,
-            # use json_path_match for the whole path
-            if i > 0 and i + 1 < len(tokens) and (tokens[i + 1][0] == "wildcard" or tokens[i + 1][0] == "index"):
-                # We have a complex path with multiple array accesses
-                root_token = tokens[0]
-                if root_token[0] == "field":
-                    root_field = cast(str, root_token[1])
+    # Find the first array wildcard or predicate, if any
+    split_idx = None
+    for i, token in enumerate(tokens[1:], 1):  # Start from second token
+        if token[0] in ("wildcard", "predicate"):
+            split_idx = i
+            break
 
-                    # Build JSONPath string for everything from the index onwards
-                    json_path = "$"
-                    for j in range(i, len(tokens)):
-                        t = tokens[j]
-                        if t[0] == "index":
-                            json_path += f"[{t[1]}]"
-                        elif t[0] == "wildcard":
-                            json_path += "[*]"
-                        elif t[0] == "field":
-                            json_path += f".{t[1]}"
+    # If there's no wildcard or predicate, construct path and use json_path_match
+    if split_idx is None:
+        # Reconstruct path for all tokens after the first
+        json_path = "$"
+        for token in tokens[1:]:
+            token_type, token_value = token
+            if token_type == "field":
+                json_path += f".{token_value}"
+            elif token_type == "index":
+                json_path += f"[{token_value}]"
 
-                    return pl.col(root_field).str.json_path_match(json_path)
+        # Use json_path_match for simple path traversal
+        return base_expr.str.json_path_match(json_path)
 
-            # Simple array index access
-            expr = expr.list.get(cast(int, token_value))  # type: ignore
-        elif token_type == "wildcard":
-            # We need to handle complex wildcards with nested arrays differently
-            next_wildcard_idx = next(
-                (j for j in range(i + 1, len(tokens)) if tokens[j][0] == "wildcard"),
-                None,
+    # Handle the case with a wildcard or predicate
+    # First, process everything before the wildcard/predicate with json_path_match
+    if split_idx > 1:  # If there are tokens between root and wildcard/predicate
+        json_path = "$"
+        for token in tokens[1:split_idx]:
+            token_type, token_value = token
+            if token_type == "field":
+                json_path += f".{token_value}"
+            elif token_type == "index":
+                json_path += f"[{token_value}]"
+
+        # Apply the path up to the split point
+        expr = base_expr.str.json_path_match(json_path)
+    else:
+        # No tokens between root and wildcard/predicate
+        expr = base_expr
+
+    # Handle the wildcard or predicate and everything after it
+    split_token = tokens[split_idx]
+    split_token_type = split_token[0]
+
+    if split_token_type == "wildcard":
+        # Collect field tokens that follow the wildcard to build schema
+        field_tokens = []
+        i = split_idx + 1
+        while i < len(tokens) and tokens[i][0] == "field":
+            field_tokens.append(tokens[i])
+            i += 1
+
+        if field_tokens:
+            # Build schema for json_decode
+            struct_fields = []
+            for field_token in field_tokens:
+                field_name = cast(str, field_token[1])
+                struct_fields.append(pl.Field(field_name, pl.String))
+
+            # Apply json_decode with list of structs schema
+            schema = pl.List(pl.Struct(struct_fields))
+
+            # Handle empty lists/null values
+            return (
+                pl.when(expr.eq("[]").or_(expr.is_null()))
+                .then(pl.lit(None))
+                .otherwise(expr.str.json_decode(schema))
+            )
+        else:
+            # Generic wildcard with no field access after
+            return (
+                pl.when(expr.eq("[]").or_(expr.is_null()))
+                .then(pl.lit(None))
+                .otherwise(expr.str.json_decode())
             )
 
-            if next_wildcard_idx is not None:
-                # We have multiple wildcards in the path, construct a custom schema
-                schema, last_idx = build_nested_schema(tokens, i + 1)
-                expr = expr.str.json_decode(pl.List(schema))
-                i = last_idx
-            else:
-                # Simple wildcard handling
-                expr = process_wildcard_token(expr, tokens, i)
-                # Skip all field tokens that follow since they're processed in wildcard handling
-                next_i = i + 1
-                while next_i < len(tokens) and tokens[next_i][0] == "field":
-                    next_i += 1
-                i = next_i - 1  # -1 because we increment i at the end of the loop
-        elif token_type == "predicate":
-            expr = process_predicate_token(expr, tokens, i, token_value)
-            # If we processed the next token as part of predicate handling
-            if i + 1 < len(tokens) and tokens[i + 1][0] == "field":
-                i += 1  # Skip the next token
+    elif split_token_type == "predicate":
+        # Handle predicate expression
+        pred_info = cast(Dict[str, Any], split_token[1])
+        pred_expr = pred_info["expr"]
+        fields = pred_info["fields"]
 
-        i += 1
+        # Build schema for predicate fields
+        struct_fields = [pl.Field(field, pl.String) for field in fields]
+        schema = pl.List(pl.Struct(struct_fields))
 
+        # Decode the JSON array first
+        decoded_expr = (
+            pl.when(expr.eq("[]").or_(expr.is_null()))
+            .then(pl.lit(None))
+            .otherwise(expr.str.json_decode(schema))
+        )
+
+        # Convert predicate to a polars expression
+        pred_polars_expr = predicate_parser.convert_to_polars(pred_expr)
+
+        # Look ahead to see what to return after predicate filtering
+        if split_idx + 1 < len(tokens) and tokens[split_idx + 1][0] == "field":
+            next_field = cast(str, tokens[split_idx + 1][1])
+            # The field to extract from filtered elements
+            return_expr = pl.col(next_field)
+            # Apply the filter and return the specified field
+            return pl.when(pred_polars_expr).then(return_expr).otherwise(pl.lit(None))
+        else:
+            # Return the whole matching objects
+            return pl.when(pred_polars_expr).then(decoded_expr).otherwise(pl.lit(None))
+
+    # If we get here, we have a path we couldn't process
+    # This is a fallback, but should be rare given the logic above
     return expr

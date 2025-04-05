@@ -13,6 +13,7 @@ from polar_express.conversion.handlers.array_handlers import (
     handle_multiple_array_patterns,
 )
 from polar_express.conversion.handlers.field_handlers import handle_simple_field_access
+from polar_express.parsing import predicate_parser
 from polar_express.parsing.path_parser import (
     process_tokens,
     validate_jsonpath,
@@ -175,34 +176,11 @@ def simple_predicate_to_expr(predicate_str: str, return_expr: Expr) -> Expr:
     Returns:
         A polars expression that evaluates the predicate.
     """
-    # Parse the predicate into its components
     try:
-        conditions = parse_predicate_expression(predicate_str)
+        # Use predicate_parser to convert the predicate to a polars expression
+        condition_expr = predicate_parser.convert_to_polars(predicate_str)
     except ValueError as e:
         raise ValueError(f"Cannot parse predicate: {predicate_str} - {str(e)}")
-
-    # Build the condition expression by combining the individual conditions
-    if not conditions:
-        raise ValueError(f"No valid conditions found in predicate: {predicate_str}")
-
-    # Start with the first condition
-    field, op, value, join_op = conditions[0]
-    condition_expr = comparison_to_expr(field, op, value)
-
-    # Add each subsequent condition, respecting the join operator
-    for i in range(1, len(conditions)):
-        field, op, value, join_op_next = conditions[i]
-        next_expr = comparison_to_expr(field, op, value)
-
-        # Use the join operator from the previous condition to connect this one
-        prev_join_op = conditions[i - 1][3]
-        if prev_join_op == "&&":
-            condition_expr = condition_expr.and_(next_expr)
-        elif prev_join_op == "||":
-            condition_expr = condition_expr.or_(next_expr)
-        else:
-            # This shouldn't happen with valid input
-            raise ValueError(f"Invalid join operator in predicate: {predicate_str}")
 
     # Create the when/then/otherwise expression
     return pl.when(condition_expr).then(return_expr).otherwise(pl.lit(None))
