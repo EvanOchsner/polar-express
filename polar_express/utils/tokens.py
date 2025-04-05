@@ -2,8 +2,6 @@
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from polar_express.parsing import predicate_parser
-
 # Type for tokens produced during parsing
 Token = Tuple[str, Optional[Union[str, int, Dict[str, Any]]]]
 
@@ -92,7 +90,7 @@ def handle_predicate_token(path: str, start_idx: int) -> Token:
         start_idx: The starting index of the predicate in the path.
 
     Returns:
-        A predicate token.
+        A predicate token with the predicate string as its value.
     """
 
     # Find the end of the predicate expression
@@ -113,10 +111,12 @@ def handle_predicate_token(path: str, start_idx: int) -> Token:
             predicate_str += path[i]
         i += 1
 
-    # Parse the predicate and collect field references
-    fields = predicate_parser.extract_fields_from_predicate(predicate_str)
-    pred_expr = predicate_parser.convert_to_polars(predicate_str)
-    return ("predicate", {"expr": pred_expr, "fields": fields})
+    # Remove the outer parentheses if present
+    if predicate_str.startswith("(") and predicate_str.endswith(")"):
+        predicate_str = predicate_str[1:-1]
+
+    # Return just the predicate string without the parentheses
+    return ("predicate", predicate_str)
 
 
 def tokens_to_jsonpath(tokens: List[Token]) -> str:
@@ -140,8 +140,6 @@ def tokens_to_jsonpath(tokens: List[Token]) -> str:
         elif token_type == "index_expr":
             path += f"[{token_value}]"
         elif token_type == "predicate":
-            if isinstance(token_value, dict) and "expr" in token_value:
-                # For simplicity, use the raw predicate string if available
-                # Otherwise would need to reconstruct from the parsed expression
-                path += f"[?({token_value['expr']})]"
+            # token_value now contains the predicate string directly
+            path += f"[?({token_value})]"
     return path

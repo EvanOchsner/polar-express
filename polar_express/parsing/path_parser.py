@@ -197,15 +197,16 @@ def process_predicate_token(
         expr: The current expression.
         tokens: The list of all tokens.
         idx: The current token index.
-        token_value: The value of the current token.
+        token_value: The value of the current token (predicate string).
 
     Returns:
         The updated polars Expression.
     """
     # Handle predicate expressions for filtering arrays
-    pred_info = cast(Dict[str, Any], token_value)
-    pred_expr = pred_info["expr"]
-    fields = pred_info["fields"]
+    pred_expr = cast(str, token_value)
+
+    # Extract fields from the predicate
+    fields = predicate_parser.extract_fields_from_predicate(pred_expr)
 
     # Store parent field name for context
     parent_field = None
@@ -336,24 +337,15 @@ def process_tokens(tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, An
             schema = pl.List(pl.Struct(struct_fields))
 
             # Handle empty lists/null values
-            return (
-                pl.when(expr.eq("[]").or_(expr.is_null()))
-                .then(pl.lit(None))
-                .otherwise(expr.str.json_decode(schema))
-            )
+            return pl.when(expr.eq("[]").or_(expr.is_null())).then(pl.lit(None)).otherwise(expr.str.json_decode(schema))
         else:
             # Generic wildcard with no field access after
-            return (
-                pl.when(expr.eq("[]").or_(expr.is_null()))
-                .then(pl.lit(None))
-                .otherwise(expr.str.json_decode())
-            )
+            return pl.when(expr.eq("[]").or_(expr.is_null())).then(pl.lit(None)).otherwise(expr.str.json_decode())
 
     elif split_token_type == "predicate":
         # Handle predicate expression
-        pred_info = cast(Dict[str, Any], split_token[1])
-        pred_expr = pred_info["expr"]
-        fields = pred_info["fields"]
+        pred_expr = cast(str, split_token[1])
+        fields = predicate_parser.extract_fields_from_predicate(pred_expr)
 
         # Build schema for predicate fields
         struct_fields = [pl.Field(field, pl.String) for field in fields]
@@ -361,9 +353,7 @@ def process_tokens(tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, An
 
         # Decode the JSON array first
         decoded_expr = (
-            pl.when(expr.eq("[]").or_(expr.is_null()))
-            .then(pl.lit(None))
-            .otherwise(expr.str.json_decode(schema))
+            pl.when(expr.eq("[]").or_(expr.is_null())).then(pl.lit(None)).otherwise(expr.str.json_decode(schema))
         )
 
         # Convert predicate to a polars expression

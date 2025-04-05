@@ -85,9 +85,7 @@ class TestTokenizePath:
         assert len(tokens) == 2
         assert tokens[0] == ("field", "users")
         assert tokens[1][0] == "predicate"
-        assert "expr" in tokens[1][1]
-        assert "fields" in tokens[1][1]
-        assert tokens[1][1]["fields"] == ["age"]
+        assert tokens[1][1] == "@.age>30"
 
     def test_predicate_with_field(self):
         """Test predicate with field access like 'users[?(@.age>30)].name'."""
@@ -97,9 +95,7 @@ class TestTokenizePath:
         assert tokens[0] == ("field", "users")
         assert tokens[1][0] == "predicate"
         assert tokens[2] == ("field", "name")
-        assert "expr" in tokens[1][1]
-        assert "fields" in tokens[1][1]
-        assert tokens[1][1]["fields"] == ["age"]
+        assert tokens[1][1] == "@.age>30"
 
     def test_compound_predicate_with_and(self):
         """Test compound predicate with AND like 'users[?(@.age>30 && @.active==true)]'."""
@@ -108,9 +104,7 @@ class TestTokenizePath:
         assert len(tokens) == 2
         assert tokens[0] == ("field", "users")
         assert tokens[1][0] == "predicate"
-        assert "expr" in tokens[1][1]
-        assert "fields" in tokens[1][1]
-        assert set(tokens[1][1]["fields"]) == {"age", "active"}
+        assert tokens[1][1] == "@.age>30 && @.active==true"
 
     def test_compound_predicate_with_or(self):
         """Test compound predicate with OR like 'users[?(@.age>30 || @.premium==true)]'."""
@@ -119,9 +113,7 @@ class TestTokenizePath:
         assert len(tokens) == 2
         assert tokens[0] == ("field", "users")
         assert tokens[1][0] == "predicate"
-        assert "expr" in tokens[1][1]
-        assert "fields" in tokens[1][1]
-        assert set(tokens[1][1]["fields"]) == {"age", "premium"}
+        assert tokens[1][1] == "@.age>30 || @.premium==true"
 
     def test_complex_predicate_with_nested_conditions(self):
         """
@@ -133,9 +125,7 @@ class TestTokenizePath:
         assert len(tokens) == 2
         assert tokens[0] == ("field", "users")
         assert tokens[1][0] == "predicate"
-        assert "expr" in tokens[1][1]
-        assert "fields" in tokens[1][1]
-        assert set(tokens[1][1]["fields"]) == {"age", "premium", "subscribed"}
+        assert tokens[1][1] == "@.age>30 && (@.premium==true || @.subscribed>6)"
 
     def test_array_slices(self):
         """Test array slices like 'items[1:3]'."""
@@ -155,9 +145,7 @@ class TestTokenizePath:
         assert tokens[1] == ("index", 0)
         assert tokens[2] == ("field", "employees")
         assert tokens[3][0] == "predicate"
-        assert "expr" in tokens[3][1]
-        assert "fields" in tokens[3][1]
-        assert tokens[3][1]["fields"] == ["position"]
+        assert tokens[3][1] == '@.position=="manager"'
 
     def test_complex_path_with_multiple_types(self):
         """Test complex path with multiple types like 'users[0].addresses[*].city'."""
@@ -178,9 +166,7 @@ class TestTokenizePath:
         assert len(tokens) == 2
         assert tokens[0] == ("field", "users")
         assert tokens[1][0] == "predicate"
-        assert "expr" in tokens[1][1]
-        assert "fields" in tokens[1][1]
-        assert tokens[1][1]["fields"] == ["name"]
+        assert tokens[1][1] == '@.name=="John"'
 
     def test_array_index_after_predicate(self):
         """Test array index after predicate like 'users[?(@.age>30)][0]'."""
@@ -203,7 +189,7 @@ class TestTokenizePath:
         assert tokens[4] == ("field", "students")
         assert tokens[5][0] == "predicate"
         assert tokens[6] == ("field", "name")
-        assert tokens[5][1]["fields"] == ["grade"]
+        assert tokens[5][1] == '@.grade=="A"'
 
     def test_very_deep_nesting(self):
         """Test very deep nesting like 'a.b.c.d.e.f.g.h'."""
@@ -242,7 +228,7 @@ class TestTokenizePath:
         assert len(tokens) == 2
         assert tokens[0] == ("field", "items")
         assert tokens[1][0] == "predicate"
-        assert tokens[1][1]["fields"] == ["price"]
+        assert tokens[1][1] == "@.price<100"
 
     def test_predicate_with_greater_than_equal_operator(self):
         """Test predicate with greater than equal operator like 'items[?(@.rating>=4.5)]'."""
@@ -251,7 +237,7 @@ class TestTokenizePath:
         assert len(tokens) == 2
         assert tokens[0] == ("field", "items")
         assert tokens[1][0] == "predicate"
-        assert tokens[1][1]["fields"] == ["rating"]
+        assert tokens[1][1] == "@.rating>=4.5"
 
     def test_predicate_with_boolean_value(self):
         """Test predicate with boolean value like 'features[?(@.enabled==true)]'."""
@@ -260,7 +246,7 @@ class TestTokenizePath:
         assert len(tokens) == 2
         assert tokens[0] == ("field", "features")
         assert tokens[1][0] == "predicate"
-        assert tokens[1][1]["fields"] == ["enabled"]
+        assert tokens[1][1] == "@.enabled==true"
 
     def test_non_standard_index_expressions(self):
         """Test non-standard index expressions that should be captured as index_expr."""
@@ -283,9 +269,7 @@ class TestHandlePredicateToken:
         start_idx = path.index("?")
         token = handle_predicate_token(path, start_idx)
         assert token[0] == "predicate"
-        assert "expr" in token[1]
-        assert "fields" in token[1]
-        assert token[1]["fields"] == ["name"]
+        assert token[1] == '@.name=="John"'
 
     def test_numeric_comparison_predicate(self):
         """Test handling a numeric comparison predicate."""
@@ -293,9 +277,7 @@ class TestHandlePredicateToken:
         start_idx = path.index("?")
         token = handle_predicate_token(path, start_idx)
         assert token[0] == "predicate"
-        assert "expr" in token[1]
-        assert "fields" in token[1]
-        assert token[1]["fields"] == ["price"]
+        assert token[1] == "@.price>100"
 
     def test_boolean_predicate(self):
         """Test handling a boolean predicate."""
@@ -303,9 +285,7 @@ class TestHandlePredicateToken:
         start_idx = path.index("?")
         token = handle_predicate_token(path, start_idx)
         assert token[0] == "predicate"
-        assert "expr" in token[1]
-        assert "fields" in token[1]
-        assert token[1]["fields"] == ["enabled"]
+        assert token[1] == "@.enabled==true"
 
     def test_compound_and_predicate(self):
         """Test handling a compound AND predicate."""
@@ -313,9 +293,7 @@ class TestHandlePredicateToken:
         start_idx = path.index("?")
         token = handle_predicate_token(path, start_idx)
         assert token[0] == "predicate"
-        assert "expr" in token[1]
-        assert "fields" in token[1]
-        assert set(token[1]["fields"]) == {"age", "active"}
+        assert token[1] == "@.age>30 && @.active==true"
 
     def test_compound_or_predicate(self):
         """Test handling a compound OR predicate."""
@@ -323,9 +301,7 @@ class TestHandlePredicateToken:
         start_idx = path.index("?")
         token = handle_predicate_token(path, start_idx)
         assert token[0] == "predicate"
-        assert "expr" in token[1]
-        assert "fields" in token[1]
-        assert set(token[1]["fields"]) == {"price", "featured"}
+        assert token[1] == "@.price<10 || @.featured==true"
 
     def test_complex_nested_predicate(self):
         """Test handling a complex nested predicate."""
@@ -333,9 +309,7 @@ class TestHandlePredicateToken:
         start_idx = path.index("?")
         token = handle_predicate_token(path, start_idx)
         assert token[0] == "predicate"
-        assert "expr" in token[1]
-        assert "fields" in token[1]
-        assert set(token[1]["fields"]) == {"count", "status", "priority"}
+        assert token[1] == '@.count>100 && (@.status=="active" || @.priority>3)'
 
     def test_less_than_equal_operator(self):
         """Test handling a less than or equal operator."""
@@ -343,9 +317,7 @@ class TestHandlePredicateToken:
         start_idx = path.index("?")
         token = handle_predicate_token(path, start_idx)
         assert token[0] == "predicate"
-        assert "expr" in token[1]
-        assert "fields" in token[1]
-        assert token[1]["fields"] == ["value"]
+        assert token[1] == "@.value<=50"
 
     def test_not_equal_operator(self):
         """Test handling a not equal operator."""
@@ -353,9 +325,7 @@ class TestHandlePredicateToken:
         start_idx = path.index("?")
         token = handle_predicate_token(path, start_idx)
         assert token[0] == "predicate"
-        assert "expr" in token[1]
-        assert "fields" in token[1]
-        assert token[1]["fields"] == ["status"]
+        assert token[1] == '@.status!="inactive"'
 
     def test_multiple_field_references(self):
         """Test handling a predicate with multiple field references."""
@@ -363,9 +333,7 @@ class TestHandlePredicateToken:
         start_idx = path.index("?")
         token = handle_predicate_token(path, start_idx)
         assert token[0] == "predicate"
-        assert "expr" in token[1]
-        assert "fields" in token[1]
-        assert set(token[1]["fields"]) == {"total", "status", "priority"}
+        assert token[1] == '@.total>100 && @.status=="shipped" && @.priority>2'
 
 
 class TestTokensToJsonpath:
@@ -445,13 +413,13 @@ class TestTokensToJsonpath:
 
     def test_simple_predicate(self):
         """Test converting tokens for simple predicate filter."""
-        tokens = [("field", "users"), ("predicate", {"expr": "@.age>30", "fields": ["age"]})]
+        tokens = [("field", "users"), ("predicate", "@.age>30")]
         result = tokens_to_jsonpath(tokens)
         assert result == "$.users[?(@.age>30)]"
 
     def test_predicate_with_field(self):
         """Test converting tokens for predicate with field access."""
-        tokens = [("field", "users"), ("predicate", {"expr": "@.age>30", "fields": ["age"]}), ("field", "name")]
+        tokens = [("field", "users"), ("predicate", "@.age>30"), ("field", "name")]
         result = tokens_to_jsonpath(tokens)
         assert result == "$.users[?(@.age>30)].name"
 
@@ -459,7 +427,7 @@ class TestTokensToJsonpath:
         """Test converting tokens for compound predicate with AND."""
         tokens = [
             ("field", "users"),
-            ("predicate", {"expr": "@.age>30 && @.active==true", "fields": ["age", "active"]}),
+            ("predicate", "@.age>30 && @.active==true"),
         ]
         result = tokens_to_jsonpath(tokens)
         assert result == "$.users[?(@.age>30 && @.active==true)]"
@@ -468,7 +436,7 @@ class TestTokensToJsonpath:
         """Test converting tokens for compound predicate with OR."""
         tokens = [
             ("field", "users"),
-            ("predicate", {"expr": "@.age>30 || @.premium==true", "fields": ["age", "premium"]}),
+            ("predicate", "@.age>30 || @.premium==true"),
         ]
         result = tokens_to_jsonpath(tokens)
         assert result == "$.users[?(@.age>30 || @.premium==true)]"
@@ -477,10 +445,7 @@ class TestTokensToJsonpath:
         """Test converting tokens for complex predicate with nested conditions."""
         tokens = [
             ("field", "users"),
-            (
-                "predicate",
-                {"expr": "@.age>30 && (@.premium==true || @.subscribed>6)", "fields": ["age", "premium", "subscribed"]},
-            ),
+            ("predicate", "@.age>30 && (@.premium==true || @.subscribed>6)"),
         ]
         result = tokens_to_jsonpath(tokens)
         assert result == "$.users[?(@.age>30 && (@.premium==true || @.subscribed>6))]"
@@ -497,7 +462,7 @@ class TestTokensToJsonpath:
             ("field", "departments"),
             ("index", 0),
             ("field", "employees"),
-            ("predicate", {"expr": '@.position=="manager"', "fields": ["position"]}),
+            ("predicate", '@.position=="manager"'),
         ]
         result = tokens_to_jsonpath(tokens)
         assert result == '$.departments[0].employees[?(@.position=="manager")]'
@@ -510,13 +475,13 @@ class TestTokensToJsonpath:
 
     def test_predicate_with_string_comparison(self):
         """Test converting tokens for predicate with string comparison."""
-        tokens = [("field", "users"), ("predicate", {"expr": '@.name=="John"', "fields": ["name"]})]
+        tokens = [("field", "users"), ("predicate", '@.name=="John"')]
         result = tokens_to_jsonpath(tokens)
         assert result == '$.users[?(@.name=="John")]'
 
     def test_array_index_after_predicate(self):
         """Test converting tokens for array index after predicate."""
-        tokens = [("field", "users"), ("predicate", {"expr": "@.age>30", "fields": ["age"]}), ("index", 0)]
+        tokens = [("field", "users"), ("predicate", "@.age>30"), ("index", 0)]
         result = tokens_to_jsonpath(tokens)
         assert result == "$.users[?(@.age>30)][0]"
 
@@ -528,7 +493,7 @@ class TestTokensToJsonpath:
             ("field", "classes"),
             ("wildcard", None),
             ("field", "students"),
-            ("predicate", {"expr": '@.grade=="A"', "fields": ["grade"]}),
+            ("predicate", '@.grade=="A"'),
             ("field", "name"),
         ]
         result = tokens_to_jsonpath(tokens)
@@ -566,19 +531,19 @@ class TestTokensToJsonpath:
 
     def test_predicate_with_less_than_operator(self):
         """Test converting tokens for predicate with less than operator."""
-        tokens = [("field", "items"), ("predicate", {"expr": "@.price<100", "fields": ["price"]})]
+        tokens = [("field", "items"), ("predicate", "@.price<100")]
         result = tokens_to_jsonpath(tokens)
         assert result == "$.items[?(@.price<100)]"
 
     def test_predicate_with_greater_than_equal_operator(self):
         """Test converting tokens for predicate with greater than equal operator."""
-        tokens = [("field", "items"), ("predicate", {"expr": "@.rating>=4.5", "fields": ["rating"]})]
+        tokens = [("field", "items"), ("predicate", "@.rating>=4.5")]
         result = tokens_to_jsonpath(tokens)
         assert result == "$.items[?(@.rating>=4.5)]"
 
     def test_predicate_with_boolean_value(self):
         """Test converting tokens for predicate with boolean value."""
-        tokens = [("field", "features"), ("predicate", {"expr": "@.enabled==true", "fields": ["enabled"]})]
+        tokens = [("field", "features"), ("predicate", "@.enabled==true")]
         result = tokens_to_jsonpath(tokens)
         assert result == "$.features[?(@.enabled==true)]"
 
@@ -611,17 +576,13 @@ class TestTokensToJsonpath:
         tokens = tokenize_path(path)
         result = tokens_to_jsonpath(tokens)
 
-        # Verify key structural elements (not exact predicate text)
-        assert result.startswith("$.users[?(")
-        assert result.endswith(")].name")
-        assert "age" in result  # Field name should be preserved
+        # Verify the result matches the expected format
+        assert result == "$.users[?(@.age>30)].name"
 
         # More complex path with nested predicates
         path = 'schools[0].classes[*].students[?(@.grade=="A")].name'
         tokens = tokenize_path(path)
         result = tokens_to_jsonpath(tokens)
 
-        # Verify structure is preserved
-        assert result.startswith("$.schools[0].classes[*].students[?(")
-        assert result.endswith(")].name")
-        assert "grade" in result  # Field name should be preserved
+        # Verify the result matches the expected format
+        assert result == '$.schools[0].classes[*].students[?(@.grade=="A")].name'

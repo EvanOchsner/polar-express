@@ -84,7 +84,7 @@ def parse_predicate_expression(
 
         # Find the next comparison operator and extract the field and operator
         # Skip past the @. prefix
-        if predicate_str[pos: pos + 2] == "@.":
+        if predicate_str[pos : pos + 2] == "@.":
             pos += 2
         else:
             raise ValueError(f"Expected @. prefix at position {pos}")
@@ -124,10 +124,10 @@ def parse_predicate_expression(
             value_start = pos
 
             # Check if it might be a boolean value
-            if predicate_str[pos: pos + 4] == "true":
+            if predicate_str[pos : pos + 4] == "true":
                 value = True
                 pos += 4
-            elif predicate_str[pos: pos + 5] == "false":
+            elif predicate_str[pos : pos + 5] == "false":
                 value = False
                 pos += 5
             else:
@@ -148,10 +148,10 @@ def parse_predicate_expression(
         # Look for joining operator (&& or ||)
         join_op = None
         if pos + 1 < len(predicate_str):
-            if predicate_str[pos: pos + 2] == "&&":
+            if predicate_str[pos : pos + 2] == "&&":
                 join_op = "&&"
                 pos += 2
-            elif predicate_str[pos: pos + 2] == "||":
+            elif predicate_str[pos : pos + 2] == "||":
                 join_op = "||"
                 pos += 2
 
