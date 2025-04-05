@@ -66,8 +66,8 @@ def tokenize_path(path: str) -> List[Token]:
                     try:
                         tokens.append(("index", int(index_str)))
                     except ValueError:
-                        # Handle other array accessor syntaxes if needed
-                        tokens.append(("index_expr", index_str))
+                        # We don't support non-integer indices
+                        raise ValueError(f"Non-integer array index not supported: '{index_str}'")
 
                 i += 1  # Skip the closing bracket
         else:
@@ -137,8 +137,6 @@ def tokens_to_jsonpath(tokens: List[Token]) -> str:
             path += f"[{token_value}]"
         elif token_type == "wildcard":
             path += "[*]"
-        elif token_type == "index_expr":
-            path += f"[{token_value}]"
         elif token_type == "predicate":
             # token_value now contains the predicate string directly
             path += f"[?({token_value})]"

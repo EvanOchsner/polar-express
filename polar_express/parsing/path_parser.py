@@ -246,10 +246,11 @@ def process_tokens(tokens: List[Tuple[str, Optional[Union[str, int, Dict[str, An
     """
     Process a list of tokens to build a polars expression.
 
-    Always uses the first token for the column name. After that, chains tokens together into
-    a path to be traversed via `base_expr.str.json_path_match(reconstructed_path)`. Whenever
-    an array wildcard or predicate is encountered, stops the `json_path_match` traversal,
-    determines the datatype of the list elements, then uses `expr.str.json_decode(list_schema)`
+    Always uses the first token for the column name. After that, we chain tokens together into
+    a path to be traversed via `base_expr.str.json_path_match(reconstructed_path)`.
+
+    Whenever an array wildcard or predicate is encountered, we stop the `json_path_match` traversal,
+    determine the datatype of the list elements, then use `expr.str.json_decode(list_schema)`
     to handle the array wildcard or predicate.
 
     Args:
