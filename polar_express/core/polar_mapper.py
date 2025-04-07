@@ -54,11 +54,11 @@ class PolarMapper:
         """
         self.steps.append({"type": "filter", "expr": predicate_expr})
         return self
-        
+
     def add_explode_step(self, column: str) -> "PolarMapper":
         """
         Add an explode step to the computation pipeline.
-        
+
         This operation will explode a column containing arrays or lists into multiple rows.
 
         Args:
