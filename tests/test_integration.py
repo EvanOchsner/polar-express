@@ -175,7 +175,7 @@ class TestJsonPathIntegration:
         assert abs(float(balances[2]) - 8000.00) < 0.001
         assert balances[3] is None  # Empty array doesn't have a first account
 
-    def ignore_test_array_filter_with_predicate(self, sample_df):
+    def test_array_filter_with_predicate(self, sample_df):
         """Test filtering arrays with predicates."""
         # Extract items with price > 100
         expr = jsonpath_to_polars("$.inventory.items[?(@.price>100)].name")
@@ -189,7 +189,7 @@ class TestJsonPathIntegration:
         assert "Laptop" in str(result.select("expensive_items"))
         assert "Monitor" in str(result.select("expensive_items"))
 
-    def ignore_test_array_filter_with_compound_predicate(self, sample_df):
+    def test_array_filter_with_compound_predicate(self, sample_df):
         """Test filtering arrays with compound predicates using AND operators."""
         # Create a sample dataframe with items having multiple attributes
         products_json = [
