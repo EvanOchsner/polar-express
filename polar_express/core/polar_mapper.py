@@ -54,6 +54,21 @@ class PolarMapper:
         """
         self.steps.append({"type": "filter", "expr": predicate_expr})
         return self
+        
+    def add_explode_step(self, column: str) -> "PolarMapper":
+        """
+        Add an explode step to the computation pipeline.
+        
+        This operation will explode a column containing arrays or lists into multiple rows.
+
+        Args:
+            column: Name of the column to explode.
+
+        Returns:
+            Self for method chaining.
+        """
+        self.steps.append({"type": "explode", "column": column})
+        return self
 
     def map(self, df: DataFrame) -> DataFrame:
         """
@@ -76,6 +91,8 @@ class PolarMapper:
                 result = result.with_columns(step["exprs"])
             elif step_type == "filter":
                 result = result.filter(step["expr"])
+            elif step_type == "explode":
+                result = result.explode(step["column"])
 
         return result
 
@@ -101,6 +118,8 @@ class PolarMapper:
                 result += f"{i}. WITH_COLUMNS: {', '.join(exprs)}\n"
             elif step_type == "filter":
                 result += f"{i}. FILTER: {step['expr']}\n"
+            elif step_type == "explode":
+                result += f"{i}. EXPLODE: {step['column']}\n"
 
         return result
 
@@ -138,6 +157,8 @@ class PolarMapper:
                 serialized_step["exprs"] = [str(expr) for expr in cast(List[Expr], step["exprs"])]
             elif step["type"] == "filter":
                 serialized_step["expr"] = str(step["expr"])
+            elif step["type"] == "explode":
+                serialized_step["column"] = step["column"]
 
             serializable_steps.append(serialized_step)
 
@@ -177,6 +198,8 @@ class PolarMapper:
                 description += f"Step {i}: Add columns {expr_str}\n"
             elif step_type == "filter":
                 description += f"Step {i}: Filter rows where {step['expr']}\n"
+            elif step_type == "explode":
+                description += f"Step {i}: Explode column {step['column']} into multiple rows\n"
 
             description += "\n"
 
