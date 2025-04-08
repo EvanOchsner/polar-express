@@ -2,7 +2,6 @@
 
 from typing import Optional
 
-# Import the conversion function from the main module
 from polar_express.conversion.jsonpath_to_polars import jsonpath_to_polars
 
 
